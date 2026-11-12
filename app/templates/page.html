@@ -1,0 +1,2 @@
+{% extends "base.html" %}{% block title %}{{ pg.title }} | {{ S.site_name }}{% endblock %}
+{% block body %}<section class="sec"><h1 style="font-size:clamp(38px,6vw,76px);margin-bottom:28px">{{ pg.title }}</h1><div class="prose">{{ pg.body|safe }}</div></section>{% endblock %}

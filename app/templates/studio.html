@@ -1,0 +1,7 @@
+{% extends "base.html" %}{% block title %}Studio | {{ S.site_name }}{% endblock %}{% block robots %}<meta name="robots" content="noindex">{% endblock %}
+{% block body %}<section class="sec"><h1 style="font-size:clamp(38px,6vw,64px)">{{ 'All products' if u.role=='admin' else 'Your products' }}</h1>
+<div class="stats"><div><b>{{ products|length }}</b>products</div><div><b>{{ sold[0] }}</b>paid sales</div><div><b>{{ fmt(sold[1]) }}</b>sales total</div></div>
+{% if u.role=='seller' %}<p class="mute">New and edited products go live after admin approval. Payouts are sent to you manually from your sales total.</p>{% endif %}
+{% if u.role=='seller' %}<div class="stats"><div><b>{{ fmt(bal.owed) }}</b>your share</div><div><b>{{ fmt(bal.paid) }}</b>paid out to you</div><div><b>{{ fmt(bal.due) }}</b>due to you</div></div>{% endif %}
+<p style="margin:18px 0"><a class="btn" href="/studio/edit">Add product</a></p>
+{% for p in products %}<a class="row" href="/studio/edit?id={{ p.id }}" style="grid-template-columns:1fr auto auto"><span class="n">{{ p.title }}</span><span class="pill">{{ p.status }}</span><span class="pr">{{ fmt(p.price_cents) }}</span></a>{% endfor %}</section>{% endblock %}

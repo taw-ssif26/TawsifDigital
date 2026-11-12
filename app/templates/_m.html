@@ -1,0 +1,3 @@
+{% macro price(p) %}{% set v = show(p) %}{% if v[1] %}<s>{{ fmt(v[1]) }}</s>{% endif %}{{ fmt(v[0]) }}{% if p.per %}<i>/{{ p.per }}</i>{% endif %}{% endmacro %}
+{% macro row(p) %}<a class="row" href="/p/{{ p.slug }}" data-r><span class="nw">{% if p.image %}<img class="thumb" src="/img/{{ p.image }}" alt="" width="72" height="72" loading="lazy">{% endif %}<span class="n">{{ p.title }}<small>{{ p.summary }}</small></span></span><span class="k">{{ p.kind }}</span><span class="pr">{{ price(p) }}</span></a>{% endmacro %}
+{% macro csrf_f() %}<input type="hidden" name="csrf_token" value="{{ csrf }}">{% endmacro %}
