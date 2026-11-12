@@ -56,3 +56,19 @@ def test_two_factor_login():
 
 def test_legal_pages_exist():
     c = C(); assert all(c.get(f"/pages/{s}").status_code == 200 for s in ("terms", "refunds", "privacy"))
+
+def test_external_product_sends_buyers_to_its_own_site():
+    pid, slug = product(external_url="https://shop.example.com/landing", pay_link=""); b, a, s = login("buyer", country="Bangladesh"), login("admin"), login("seller")
+    for c in (C(), b):
+        h = c.get(f"/p/{slug}").text; assert 'href="https://shop.example.com/landing"' in h and 'rel="noopener"' in h and "Buy on shop.example.com" in h
+        assert "/buy/" not in h and "bKash" not in h and "Pay with Payoneer" not in h
+    assert b.form(f"/buy/{pid}", provider="payoneer").status_code == 400 and b.form(f"/buy/{pid}", provider="manual").status_code == 400
+    a.form("/admin/settings", offer_on="1", offer_pct="50"); assert "$14.50" not in C().get(f"/p/{slug}").text; a.form("/admin/settings", offer_on="0")  # our offers don't apply to their price
+    assert "sold on its own website" in C().get("/llms.txt").text and slug in C().get("/sitemap.xml").text
+    f = dict(title="Ext", summary="x", kind="App", price_usd="0", status="live", external_url="https://other.example.com")
+    s.files("/studio/edit", {}, **f); a.files("/studio/edit", {}, **{**f, "title": "Ext2", "external_url": "http://insecure.example.com"})
+    with m.Session(m.engine) as db:
+        assert db.scalar(m.select(m.Product.external_url).where(m.Product.title == "Ext")) == ""  # seller can't route buyers off-site
+        assert db.scalar(m.select(m.Product.id).where(m.Product.title == "Ext2")) is None  # non-https rejected
+    a.files("/studio/edit", {}, **{**f, "title": "Ext3"}); page = C().get("/p/" + [x for x in re.findall(r'/p/(ext3[^"]*)', C().get("/products").text)][0]).text
+    assert "https://other.example.com" in page and "$0" not in page

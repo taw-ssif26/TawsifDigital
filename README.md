@@ -15,6 +15,9 @@ Tests: `pip install -r requirements-dev.txt && pytest`
 Only the admin can set payment links, so a seller can never redirect money to themselves. Monthly products grant 31 days per confirmation: use *Renew +1 month* each cycle (expiring ones are listed in Admin).
 When you run an offer, a Payoneer link has a fixed amount, so give each product an offer link at the discounted price, or buyers will pay the old amount. The order page always shows the amount due; confirm it matches before marking paid.
 
+## Products sold on their own website
+In Studio, an admin can set **"Sold on its own website"** on any product. The product keeps its page here (description, cover, SEO, structured data), but the button becomes "Buy on theirsite.com" and sends the buyer straight there. Nothing is charged here, no order is created, and our offers and Payoneer/bKash options are hidden for it. Leave the price at 0 to hide the price. Only the admin can set this, so a seller can't send buyers (and their money) off-site. Sales on those sites don't appear in Admin or in seller payouts.
+
 ## Free deploy (Render + Neon)
 1. Private GitHub repo. Neon free Postgres: copy the connection string into DATABASE_URL.
 2. Render > New Web Service > Docker > Free. Env vars: ENV=production, PORT=8000, SECRET_KEY, BASE_URL, ADMIN_EMAIL, DATABASE_URL (see .env.example). Health check path /robots.txt.

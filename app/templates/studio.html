@@ -4,4 +4,4 @@
 {% if u.role=='seller' %}<p class="mute">New and edited products go live after admin approval. Payouts are sent to you manually from your sales total.</p>{% endif %}
 {% if u.role=='seller' %}<div class="stats"><div><b>{{ fmt(bal.owed) }}</b>your share</div><div><b>{{ fmt(bal.paid) }}</b>paid out to you</div><div><b>{{ fmt(bal.due) }}</b>due to you</div></div>{% endif %}
 <p style="margin:18px 0"><a class="btn" href="/studio/edit">Add product</a></p>
-{% for p in products %}<a class="row" href="/studio/edit?id={{ p.id }}" style="grid-template-columns:1fr auto auto"><span class="n">{{ p.title }}</span><span class="pill">{{ p.status }}</span><span class="pr">{{ fmt(p.price_cents) }}</span></a>{% endfor %}</section>{% endblock %}
+{% for p in products %}<a class="row" href="/studio/edit?id={{ p.id }}" style="grid-template-columns:1fr auto auto"><span class="n">{{ p.title }}</span><span class="pill">{{ p.status }}{% if p.external_url %} · external{% endif %}</span><span class="pr">{{ fmt(p.price_cents) }}</span></a>{% endfor %}</section>{% endblock %}

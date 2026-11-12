@@ -61,6 +61,7 @@ class Product(Base):
     price_cents: Mapped[int] = mapped_column(default=0)
     per: Mapped[str] = mapped_column(String(10), default="")  # "" one-time, or "month"
     pay_link: Mapped[str] = mapped_column(String(500), default="")  # Payoneer payment link, admin only (money must reach the admin)
+    external_url: Mapped[str] = mapped_column(String(500), default="")  # product sold on its own website: buyers are sent there (admin only)
     offer_link: Mapped[str] = mapped_column(String(500), default="")  # Payoneer link for the discounted price while an offer runs
     file_name: Mapped[str] = mapped_column(String(255), default="")
     link: Mapped[str] = mapped_column(String(500), default="")
@@ -145,7 +146,7 @@ PAGES = {"about": ("About", "<p>Tell your story here. Edit this page from the ad
  "refunds": ("Refunds", "<p>Because digital products can be copied the moment they are delivered, sales are generally final. If a product does not work as described, contact me within 7 days of purchase and I will fix it or refund you.</p><p><i>Starter text. Edit it to match your policy.</i></p>"),
  "privacy": ("Privacy", "<p>I store your name, email, country and purchase history so I can deliver what you bought. Payments are made through Payoneer payment links and I never see your card details. Emails are sent through Resend. If you sign in with Google I receive your name and verified email address only.</p><p>I do not sell your data. To see or delete your data, contact me.</p><p><i>Starter text, not legal advice. Review before launch.</i></p>")}
 
-ADDS = {"products": {"image": "VARCHAR(80) DEFAULT ''", "pay_link": "VARCHAR(500) DEFAULT ''", "offer_link": "VARCHAR(500) DEFAULT ''"}, "orders": {"paid_until": "TIMESTAMP", "note": "VARCHAR(200) DEFAULT ''", "claimed": "BOOLEAN DEFAULT FALSE"},
+ADDS = {"products": {"image": "VARCHAR(80) DEFAULT ''", "pay_link": "VARCHAR(500) DEFAULT ''", "offer_link": "VARCHAR(500) DEFAULT ''", "external_url": "VARCHAR(500) DEFAULT ''"}, "orders": {"paid_until": "TIMESTAMP", "note": "VARCHAR(200) DEFAULT ''", "claimed": "BOOLEAN DEFAULT FALSE"},
         "users": {"wants_seller": "BOOLEAN DEFAULT FALSE", "totp": "VARCHAR(32) DEFAULT ''", "totp_last": "BIGINT DEFAULT 0"}}
 LEGACY = {"products": ["ls_variant"], "orders": ["ls_order_id", "ls_sub_id", "sub_status", "renews_at", "ends_at", "portal_url"]}  # from the removed Lemon Squeezy integration
 def migrate():  # adds new columns and drops the old Lemon Squeezy ones on databases created earlier
@@ -183,7 +184,7 @@ def fmt(c): return f"${c/100:,.0f}" if c % 100 == 0 else f"${c/100:,.2f}"
 def price(p, S):
     try: pct = min(90, max(0, int(S["offer_pct"])))
     except ValueError: pct = 0
-    if S["offer_on"] == "1" and pct and p.price_cents: return p.price_cents * (100 - pct) // 100, p.price_cents
+    if S["offer_on"] == "1" and pct and p.price_cents and not p.external_url: return p.price_cents * (100 - pct) // 100, p.price_cents
     return p.price_cents, None
 def clean(html): return nh3.clean(html or "")
 
@@ -356,6 +357,7 @@ def account_save(request: Request, db=Depends(get_db), _=Depends(csrf), name: st
 def buy(pid: int, request: Request, db=Depends(get_db), _=Depends(csrf), provider: str = Form("payoneer")):
     u = need(request, db); limit(request, "buy", 15); p = db.get(Product, pid); S = settings(db)
     if not p or p.status != "live": raise HTTPEx(404)
+    if p.external_url: raise HTTPEx(400, "This product is sold on its own website.")
     if provider not in ("payoneer", "manual"): raise HTTPEx(400, "Unknown payment method.")
     if provider == "manual" and u.country != "Bangladesh": raise HTTPEx(403, "Manual payment is only for buyers in Bangladesh.")
     if provider == "payoneer" and not pay_url(p, S): raise HTTPEx(503, "Payment isn't set up for this product yet. Please contact me.")
@@ -401,7 +403,7 @@ def studio_edit(request: Request, id: int = 0, db=Depends(get_db)):
     return render(request, db, "edit.html", p=p)
 @app.post("/studio/edit")
 def studio_save(request: Request, db=Depends(get_db), _=Depends(csrf), id: int = Form(0), title: str = Form(), summary: str = Form(""), body: str = Form(""), kind: str = Form("Download"),
-                price_usd: float = Form(0), per: str = Form(""), link: str = Form(""), pay_link: str = Form(None), offer_link: str = Form(None), status: str = Form("pending"), file: UploadFile = File(None), image: UploadFile = File(None)):
+                price_usd: float = Form(0), per: str = Form(""), link: str = Form(""), pay_link: str = Form(None), offer_link: str = Form(None), external_url: str = Form(None), status: str = Form("pending"), file: UploadFile = File(None), image: UploadFile = File(None)):
     u = need(request, db, "seller", "admin"); p = db.get(Product, id) if id else Product(owner_id=u.id, slug="")
     if id and (not p or (u.role == "seller" and p.owner_id != u.id)): raise HTTPEx(404)
     p.title, p.summary, p.body, p.kind = title.strip()[:160], summary.strip()[:300], clean(body), kind.strip()[:40]
@@ -409,10 +411,10 @@ def studio_save(request: Request, db=Depends(get_db), _=Depends(csrf), id: int =
     if link and not link.startswith("https://"): flash(request, "Product links must start with https://"); return go(f"/studio/edit?id={id}")
     p.link = link.strip()[:500]
     if u.role == "admin":  # only the admin may set where customers pay; a seller can never redirect money
-        for attr, val in (("pay_link", pay_link), ("offer_link", offer_link)):
+        for attr, val in (("pay_link", pay_link), ("offer_link", offer_link), ("external_url", external_url)):
             if val is None: continue
             val = val.strip()[:500]
-            if val and not val.startswith("https://"): flash(request, "Payment links must start with https://"); return go(f"/studio/edit?id={id}")
+            if val and not val.startswith("https://"): flash(request, "Links must start with https://"); return go(f"/studio/edit?id={id}")
             setattr(p, attr, val)
     if u.role == "admin" and status in ("live", "hidden", "pending"): p.status = status
     elif u.role == "seller": p.status = "pending"  # every seller change needs re-approval
@@ -589,4 +591,4 @@ def sitemap(db=Depends(get_db)):
 @app.get("/llms.txt")
 def llms(db=Depends(get_db)):
     S = settings(db); ps = db.scalars(select(Product).where(Product.status == "live")).all()
-    return PlainTextResponse(f"# {S['site_name']}\n\n> {S['seo_desc']}\n\n## Products\n" + "\n".join(f"- [{p.title}]({BASE}/p/{p.slug}): {p.summary} ({fmt(price(p, S)[0])}{'/' + p.per if p.per else ''}, {p.kind})" for p in ps) + "\n")
+    return PlainTextResponse(f"# {S['site_name']}\n\n> {S['seo_desc']}\n\n## Products\n" + "\n".join(f"- [{p.title}]({BASE}/p/{p.slug}): {p.summary} ({(fmt(price(p, S)[0]) + ('/' + p.per if p.per else '') + ', ') if price(p, S)[0] else ''}{p.kind}{', sold on its own website' if p.external_url else ''})" for p in ps) + "\n")

@@ -7,7 +7,8 @@
 <label>Type (Source code, Automation, Subscription...)<input name="kind" maxlength="40" value="{{ p.kind if p else 'Download' }}"></label>
 <label>Price in USD<input name="price_usd" type="number" step="0.01" min="0" value="{{ '%.2f'|format(p.price_cents/100) if p else '19.00' }}"></label>
 <label>Billing<select name="per"><option value="">One-time</option><option value="month" {{ 'selected' if p and p.per }}>Monthly</option></select></label>
-{% if u.role == 'admin' %}<label>Payoneer payment link (its amount must equal the price)<input name="pay_link" value="{{ p.pay_link if p }}" placeholder="https://"></label>
+{% if u.role == 'admin' %}<label>Sold on its own website? Paste its https address. Buyers are sent there and nothing is charged here<input name="external_url" value="{{ p.external_url if p }}" placeholder="https://"></label>
+<label>Payoneer payment link (its amount must equal the price)<input name="pay_link" value="{{ p.pay_link if p }}" placeholder="https://"></label>
 <label>Payoneer link for the offer price (optional, used while an offer is on)<input name="offer_link" value="{{ p.offer_link if p }}" placeholder="https://"></label>{% endif %}
 <label>Delivery file (zip, pdf, etc., max 100 MB). Saved on this server's disk: on free hosting it is erased on every restart, so use the link field below instead{% if p and p.file_name %} (a file is attached; upload to replace){% endif %}<input type="file" name="file"></label>
 <label>Cover image (PNG, JPG or WebP, max 3 MB){% if p and p.image %} (replace by uploading again){% endif %}<input type="file" name="image" accept="image/png,image/jpeg,image/webp"></label>
