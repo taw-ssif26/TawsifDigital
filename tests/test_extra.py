@@ -7,20 +7,21 @@ def test_totp_matches_rfc6238():
 
 def test_seller_payouts_and_refund_clawback():
     sid, _ = user("seller"); pid, _ = product(owner=sid); buyer = login("buyer"); a = login("admin")
-    code = order(buyer.uid, pid); hook(C(), "order_created", {"status": "paid", "total": 10000}, code, id="900")
+    code = order(buyer.uid, pid); mark_paid(code, 10000)
     with m.Session(m.engine) as db: b = m.balance(db, sid, 80)
     assert b == {"gross": 10000, "owed": 8000, "paid": 0, "due": 8000}
     assert a.form("/admin/payout", seller_id=sid, amount_usd="0").status_code == 303 and a.form("/admin/payout", seller_id=sid, amount_usd="30", note="bKash").status_code == 303
     with m.Session(m.engine) as db: assert m.balance(db, sid, 80)["due"] == 5000
     assert "Seller payouts" in a.get("/admin").text and login("buyer").form("/admin/payout", seller_id=sid, amount_usd="5").status_code == 403
-    hook(C(), "order_refunded", {}, code)
+    a.form(f"/admin/order/{get_order(code).id}", action="refunded")
     with m.Session(m.engine) as db: assert m.balance(db, sid, 80)["due"] == -3000
 
 def test_emails_sent_once(monkeypatch):
     sent = []; monkeypatch.setattr(m, "mail", lambda to, sub, body: sent.append((to, sub, body)))
-    b = login("buyer"); pid, _ = product(); code = order(b.uid, pid)
-    for _ in range(2): hook(C(), "order_created", {"status": "paid", "total": 2900}, code, id="31")
+    b, a = login("buyer"), login("admin"); pid, _ = product(); code = order(b.uid, pid); oid = get_order(code).id
+    for _ in range(2): a.form(f"/admin/order/{oid}", action="paid")
     paid = [x for x in sent if x[0] == b.email]; assert len(paid) == 1 and get_order(code).license in paid[0][2]
+    b.form(f"/order/{code}/claim"); assert b.form(f"/order/{get_order(order(b.uid, pid)).code}/claim").status_code == 303 and any("Payment to confirm" in x[1] for x in sent)
 
 def test_resend_verification(monkeypatch):
     sent = []; monkeypatch.setattr(m, "mail", lambda to, sub, body: sent.append((to, body)))
@@ -28,8 +29,8 @@ def test_resend_verification(monkeypatch):
     for e in (pending, ok, "ghost@t.com"): assert c.form("/resend", email=e).headers["location"] == "/login"
     assert [x[0] for x in sent] == [pending] and "/verify/" in sent[0][1]
 
-def test_manual_subscription_paid_until_and_renewal():
-    pid, _ = product(per="month"); bd, a = login("buyer"), login("admin"); code = bd.form(f"/buy/{pid}", provider="manual").headers["location"].split("/")[-1]; oid = get_order(code).id
+def test_monthly_subscription_paid_until_and_renewal():
+    pid, _ = product(per="month"); bd, a = login("buyer"), login("admin"); code = bd.form(f"/buy/{pid}", provider="payoneer").headers["location"].split("/")[-1]; oid = get_order(code).id
     a.form(f"/admin/order/{oid}", action="paid"); o = get_order(code); assert timedelta(days=30) < o.paid_until - datetime.utcnow() < timedelta(days=32) and bd.get(f"/download/{code}").status_code == 303
     with m.Session(m.engine) as db: db.get(m.Order, oid).paid_until = datetime.utcnow() - timedelta(days=1); db.commit()
     assert bd.get(f"/download/{code}").status_code == 404  # lapsed

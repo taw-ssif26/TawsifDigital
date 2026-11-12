@@ -1,44 +1,35 @@
-# Tawsif Digital: storefront + backend (FastAPI, server-rendered)
+# Digital store: FastAPI, server-rendered, Payoneer payment links
 
 ## Run locally
     python -m venv .venv && source .venv/bin/activate
     pip install -r requirements.txt
     ADMIN_EMAIL=you@example.com uvicorn app.main:app --reload
-Open http://localhost:8000. Register with ADMIN_EMAIL to become admin. With no RESEND_API_KEY the verification link prints in the terminal.
+Open http://localhost:8000 and register with ADMIN_EMAIL to become admin. With no RESEND_API_KEY the confirmation link prints in the terminal.
+Tests: `pip install -r requirements-dev.txt && pytest`
 
-## Free deploy
-1. Push to GitHub. Create a free Postgres on Neon or Supabase and copy its URL into DATABASE_URL (free hosts wipe local disks).
-2. Deploy the Dockerfile on Render or Koyeb free web service. Set the env vars from .env.example.
-3. Uploaded delivery files live in DATA_DIR/files. On free hosts use a persistent disk, or deliver by https link instead of upload.
-4. Free-tier services sleep when idle: first visit after a pause is slow. Ping /robots.txt every 10 min with UptimeRobot.
+## How payment works (no payment provider integration, so no webhooks to break)
+1. Admin creates a **Payoneer payment request** for a product's price and pastes its link into the product in Studio ("Payoneer payment link"). Optionally set a second link for the offer price. Or set one default link in Admin > Site content.
+2. Buyer clicks *Pay with Payoneer*, gets an order page with the amount, the order code and your link, pays, then presses *I've paid* (optionally adding a reference).
+3. You get an email and the order shows "says paid" at the top of Admin > Orders. **Check the money in your Payoneer account**, then press *Mark paid*. The buyer gets a receipt with their license key and the product unlocks.
+4. Bangladesh buyers also see *Pay with bKash or Nagad* (set the number in Site content). Same flow, and you confirm by hand.
+Only the admin can set payment links, so a seller can never redirect money to themselves. Monthly products grant 31 days per confirmation: use *Renew +1 month* each cycle (expiring ones are listed in Admin).
+When you run an offer, a Payoneer link has a fixed amount, so give each product an offer link at the discounted price, or buyers will pay the old amount. The order page always shows the amount due; confirm it matches before marking paid.
 
-## Lemon Squeezy
-- Create a product and variant per item. Paste the variant ID into the product in /studio. Price shown must equal the variant price.
-- Settings > Webhooks: URL https://yourdomain/webhooks/lemonsqueezy, events order_created, order_refunded, subscription_created, subscription_updated, subscription_cancelled, subscription_expired, subscription_resumed, subscription_paused, subscription_payment_success, subscription_payment_failed, signing secret = LS_WEBHOOK_SECRET.
-- Offers: create a discount code in Lemon Squeezy, then set the same % and code in Admin > Site content.
+## Free deploy (Render + Neon)
+1. Private GitHub repo. Neon free Postgres: copy the connection string into DATABASE_URL.
+2. Render > New Web Service > Docker > Free. Env vars: ENV=production, PORT=8000, SECRET_KEY, BASE_URL, ADMIN_EMAIL, DATABASE_URL (see .env.example). Health check path /robots.txt.
+3. Free web services sleep after ~15 minutes idle: add an UptimeRobot monitor on /robots.txt, or move to the $7 instance.
+4. Product images are stored in the database. Delivery files uploaded in Studio sit on the server disk, which free hosts erase: use the delivery link field instead (a private cloud-storage link).
+5. Register with ADMIN_EMAIL, turn on two-factor in Account, edit Site content, delete the demo products.
+Existing databases get new columns and lose the old Lemon Squeezy columns automatically at startup (old SQLite files: delete the .db and start fresh).
 
-## Roles
-Admin promotes users to seller in Admin > Users and roles. Seller edits go back to "pending" until admin sets "live". Manual bKash/Nagad orders: buyer sees your number and an order code; mark it paid in Admin > Orders.
+## Other settings
+- Email: RESEND_API_KEY and MAIL_FROM (needs a verified domain). Receipts, claim alerts, payout notices, resend-verification.
+- Google login: OAuth Web client, redirect URI BASE_URL/auth/google/callback, set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET (move the consent screen to production).
+- Sellers: admin promotes users in Admin > Users and roles. Seller edits go back to "pending". Admin > Seller payouts tracks what each seller is owed (share % in Site content); you pay them yourself and record it.
+- Backups: .github/workflows/backup.yml dumps Postgres daily (private repo only; secret DATABASE_URL, use Neon's direct connection string).
+- Errors: SENTRY_DSN (optional, no personal data sent).
+- Legal pages start as templates, not legal advice: edit them in Admin > Pages.
 
-## Security in place
-Argon2 hashing, signed httpOnly session cookies, CSRF tokens on every POST, email verification, rate limits, HMAC-verified idempotent webhooks, role checks server-side, HTML sanitized with nh3, upload type/size limits, files served only to paying owners, CSP and security headers.
-
-## Google login
-Google Cloud Console > Credentials > OAuth client (Web). Authorized redirect URI: https://yourdomain/auth/google/callback. Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET; the button appears automatically. Free.
-
-## Subscriptions
-Renewals, failed payments, cancellations and expiry arrive by webhook. A cancelled subscription keeps access until its paid period ends; expired or refunded orders lose downloads. Buyers get a Manage billing link to Lemon Squeezy's portal. Every payment (first, renewal, manual) is one row in the payments table, which is what seller payouts should be calculated from.
-
-## Tests
-    pip install -r requirements-dev.txt && pytest
-Existing databases get the new columns automatically at startup.
-
-## Operations
-- **Payouts:** Admin > Seller payouts shows each seller's sales, their share (set the percent in Site content), what you've paid and what's due. Pay them yourself, then record it. Refunds reduce what's owed.
-- **Manual (bKash/Nagad) subscriptions:** marking a monthly order paid grants 31 days; use Renew +1 month each cycle. Orders lapsing within 7 days are listed in Admin.
-- **Emails:** buyers get a receipt with their license key; failed card renewals email the buyer a billing link; sellers get a payout email. Needs RESEND_API_KEY and a verified sending domain.
-- **Two-factor:** every user can enable authenticator-app codes in Account. Turn it on for admin first. A code can't be reused.
-- **Backups:** `.github/workflows/backup.yml` dumps Postgres daily to a private-repo artifact (30 days). Add DATABASE_URL as a repo secret. Keep the repo private: dumps contain emails. Uploaded files are not in the dump, so keep originals of what you upload.
-- **Errors:** set SENTRY_DSN (free tier) for alerts. No personal data is sent.
-- **Legal pages:** Terms, Refunds and Privacy start as plain-language templates, not legal advice. Edit them in Admin > Pages before launch.
-# TawsifDigital
+## Themes
+Light (stone and ink, brass accents, faint dust), Dark (charcoal and emerald, champagne motes), Effects (jewel tones with a particle constellation that reacts to the cursor, aurora, tilt, magnetic buttons, scroll progress, page curtains). All respect reduced-motion.

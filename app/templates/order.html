@@ -1,3 +1,12 @@
-{% extends "base.html" %}{% block robots %}<meta name="robots" content="noindex">{% endblock %}
-{% block body %}<section class="sec" style="max-width:620px"><h1 style="font-size:clamp(34px,5vw,58px)">Pay with bKash or Nagad</h1>
-<div class="card" style="margin-top:26px"><p>Send <b>{{ fmt(o.amount_cents) }}</b> worth of payment for <b>{{ o.product.title }}</b>, then contact me directly on <b>{{ S.bd_phone }}</b> and quote order code <b>{{ o.code }}</b>.</p><p class="mute" style="margin-top:12px">Your product unlocks in your library as soon as I confirm the payment. Status: <span class="pill">{{ o.status }}</span></p></div><p style="margin-top:22px"><a class="btn o" href="/account">Go to my account</a></p></section>{% endblock %}
+{% extends "base.html" %}{% from "_m.html" import cover with context %}{% block robots %}<meta name="robots" content="noindex">{% endblock %}
+{% block body %}<section class="sec" style="max-width:720px"><p class="eyebrow">Order {{ o.code }}</p><h1 style="font-size:clamp(34px,5vw,60px);margin-bottom:10px">{{ o.product.title }}</h1>
+<p class="lead" style="margin-top:0">Amount due: <b style="color:var(--fg)">{{ fmt(o.amount_cents) }}</b>{% if o.product.per %} for one month{% endif %}</p>
+{% if o.status == 'paid' %}<div class="card"><p>Payment confirmed. <a href="/account">Open your library</a>.</p></div>
+{% elif o.status == 'refunded' %}<div class="card"><p>This order was refunded.</p></div>
+{% else %}<div class="card st" data-tilt><h3 style="font-size:26px">1. Pay</h3>
+{% if o.provider == 'payoneer' %}<p class="mute">Open the secure Payoneer payment link, pay exactly <b>{{ fmt(o.amount_cents) }}</b>, and put the order code <b>{{ o.code }}</b> in the note or reference if there is a field for it.</p><p><a class="btn" href="{{ pay }}" target="_blank" rel="noopener noreferrer">Open Payoneer payment link</a></p>
+{% else %}<p class="mute">Send <b>{{ fmt(o.amount_cents) }}</b> (or its equivalent in BDT) by bKash or Nagad to <b>{{ S.bd_phone }}</b>, with order code <b>{{ o.code }}</b> as the reference.</p>{% endif %}
+<h3 style="font-size:26px;margin-top:10px">2. Tell me you've paid</h3>
+{% if o.claimed %}<p class="mute">Thanks, I've been notified{% if o.note %} (your reference: {{ o.note }}){% endif %}. Your product unlocks as soon as I see the payment.</p>
+{% else %}<form method="post" action="/order/{{ o.code }}/claim" class="st"><input type="hidden" name="csrf_token" value="{{ csrf }}"><label>Payment reference (transaction ID or a note, optional)<input name="note" maxlength="200"></label><button class="btn o">I've paid</button></form>{% endif %}
+<h3 style="font-size:26px;margin-top:10px">3. Unlock</h3><p class="mute">Once confirmed, it appears in <a href="/account">your library</a> and I'll email you.</p></div>{% endif %}</section>{% endblock %}

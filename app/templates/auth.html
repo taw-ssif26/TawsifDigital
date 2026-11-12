@@ -1,5 +1,6 @@
 {% extends "base.html" %}{% block title %}{{ 'Create account' if mode=='register' else 'Sign in' }} | {{ S.site_name }}{% endblock %}{% block robots %}<meta name="robots" content="noindex">{% endblock %}
-{% block body %}<section class="sec" style="max-width:460px"><h1 style="font-size:clamp(38px,6vw,64px);margin-bottom:24px">{{ 'Create account' if mode=='register' else 'Sign in' }}</h1>
+{% block body %}<div class="auth"><div class="ap cover c3" data-m="{{ S.site_name[:1] }}"><h2>{{ S.hero_title }}</h2><p>{{ S.hero_sub }}</p></div>
+<div class="af"><p class="eyebrow">{{ 'Join' if mode=='register' else 'Welcome back' }}</p><h1 style="font-size:clamp(34px,4.4vw,56px);margin-bottom:26px">{{ 'Create account' if mode=='register' else 'Sign in' }}</h1>
 <form method="post" class="st" autocomplete="on"><input type="hidden" name="csrf_token" value="{{ csrf }}">
 {% if mode=='register' %}<label>Name<input name="name" required maxlength="120" autocomplete="name"></label>{% endif %}
 <label>Email<input name="email" type="email" required autocomplete="email"></label>
@@ -7,5 +8,5 @@
 {% if mode=='register' %}<label>Country<select name="country" required><option>Bangladesh</option><option>United States</option><option>United Kingdom</option><option>Canada</option><option>Germany</option><option>India</option><option>Other</option></select></label>{% endif %}
 <button class="btn">{{ 'Create account' if mode=='register' else 'Sign in' }}</button></form>
 {% if google %}<p style="margin-top:14px"><a class="btn o" href="/auth/google">Continue with Google</a></p>{% endif %}
-{% if mode!='register' %}<p class="mute" style="margin-top:14px"><a href="/forgot">Forgot your password?</a></p><form method="post" action="/resend" class="st" style="margin-top:26px"><input type="hidden" name="csrf_token" value="{{ csrf }}"><label>Didn't get the confirmation email?<input name="email" type="email" placeholder="your email" required></label><button class="btn s o">Resend it</button></form>{% endif %}
-<p class="mute" style="margin-top:18px">{% if mode=='register' %}Have an account? <a href="/login">Sign in</a>{% else %}New here? <a href="/register">Create an account</a>{% endif %}</p></section>{% endblock %}
+<p class="mute" style="margin-top:18px">{% if mode=='register' %}Have an account? <a href="/login">Sign in</a>{% else %}New here? <a href="/register">Create an account</a> · <a href="/forgot">Forgot your password?</a>{% endif %}</p>
+{% if mode!='register' %}<form method="post" action="/resend" class="st" style="margin-top:26px"><input type="hidden" name="csrf_token" value="{{ csrf }}"><label>Didn't get the confirmation email?<input name="email" type="email" placeholder="your email" required></label><button class="btn s o">Resend it</button></form>{% endif %}</div></div>{% endblock %}

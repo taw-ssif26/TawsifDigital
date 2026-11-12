@@ -5,10 +5,11 @@
 <label>One-line summary<input name="summary" maxlength="300" value="{{ p.summary if p }}"></label>
 <label>Description (basic HTML allowed)<textarea name="body">{{ p.body if p }}</textarea></label>
 <label>Type (Source code, Automation, Subscription...)<input name="kind" maxlength="40" value="{{ p.kind if p else 'Download' }}"></label>
-<label>Price in USD (must match your Lemon Squeezy variant)<input name="price_usd" type="number" step="0.01" min="0" value="{{ '%.2f'|format(p.price_cents/100) if p else '19.00' }}"></label>
+<label>Price in USD<input name="price_usd" type="number" step="0.01" min="0" value="{{ '%.2f'|format(p.price_cents/100) if p else '19.00' }}"></label>
 <label>Billing<select name="per"><option value="">One-time</option><option value="month" {{ 'selected' if p and p.per }}>Monthly</option></select></label>
-<label>Lemon Squeezy variant ID<input name="ls_variant" value="{{ p.ls_variant if p }}"></label>
-<label>Delivery file (zip, pdf, etc., max 100 MB){% if p and p.file_name %} (a file is attached; upload to replace){% endif %}<input type="file" name="file"></label>
+{% if u.role == 'admin' %}<label>Payoneer payment link (its amount must equal the price)<input name="pay_link" value="{{ p.pay_link if p }}" placeholder="https://"></label>
+<label>Payoneer link for the offer price (optional, used while an offer is on)<input name="offer_link" value="{{ p.offer_link if p }}" placeholder="https://"></label>{% endif %}
+<label>Delivery file (zip, pdf, etc., max 100 MB). Saved on this server's disk: on free hosting it is erased on every restart, so use the link field below instead{% if p and p.file_name %} (a file is attached; upload to replace){% endif %}<input type="file" name="file"></label>
 <label>Cover image (PNG, JPG or WebP, max 3 MB){% if p and p.image %} (replace by uploading again){% endif %}<input type="file" name="image" accept="image/png,image/jpeg,image/webp"></label>
 <label>Or delivery link (https only)<input name="link" value="{{ p.link if p }}"></label>
 {% if u.role == 'admin' %}<label>Status<select name="status">{% for s in ['live','hidden','pending'] %}<option {{ 'selected' if p and p.status==s }}>{{ s }}</option>{% endfor %}</select></label>{% endif %}

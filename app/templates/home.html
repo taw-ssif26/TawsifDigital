@@ -1,9 +1,14 @@
-{% extends "base.html" %}{% from "_m.html" import row with context %}
+{% extends "base.html" %}{% from "_m.html" import card, cover, price with context %}
 {% block ld %}<script type="application/ld+json">{{ {"@context":"https://schema.org","@type":"Organization","name":S.site_name,"url":base,"description":S.seo_desc}|tojson }}</script>{% endblock %}
 {% block body %}
-<section class="hero"><div class="aur"></div><div><h1 data-scramble>{{ S.hero_title }}</h1><p class="lead">{{ S.hero_sub }}</p><a class="btn" href="/products">{{ S.cta_text }}</a> <a class="btn o" href="/pages/about">About</a></div>
-<svg class="seal" viewBox="0 0 200 200" aria-hidden="true"><defs><path id="c" d="M100,100 m-82,0 a82,82 0 1,1 164,0 a82,82 0 1,1 -164,0"/></defs><text><textPath href="#c">Instant delivery · Verified payment · Yours to keep · </textPath></text><text class="m" x="100" y="114" text-anchor="middle">{{ S.site_name[:1] }}</text></svg></section>
+<section class="hero"><div class="aur" data-par=".08"></div>
+<div><p class="eyebrow" data-r>{{ S.site_name }}</p><h1 data-scramble="{{ S.hero_title }}">{{ S.hero_title }}</h1><p class="lead" data-r>{{ S.hero_sub }}</p><div class="cta" data-r><a class="btn" href="/products">{{ S.cta_text }}</a><a class="btn o" href="/pages/about">About</a></div></div>
+<div class="stage" data-par="-.03">{% if products %}{% set f = products[0] %}<a class="pcard feat" href="/p/{{ f.slug }}">{{ cover(f) }}<div class="pb"><h3>{{ f.title }}</h3><div class="pf"><span class="pr">{{ price(f) }}</span><span class="go">View →</span></div></div></a>{% else %}<div class="pcard feat"><div class="cover c0" data-m="{{ S.site_name[:1] }}"></div><div class="pb"><h3>Your first product</h3></div></div>{% endif %}
+<span class="fl f1">Unlocked after payment</span><span class="fl f2">Yours to keep</span></div></section>
+<div class="tb" data-r>{% for t in S.trust_bar.split('|') %}<span>{{ t.strip() }}</span>{% endfor %}</div>
 <div class="mq" aria-hidden="true"><div>Source code ✦ Automations ✦ Templates ✦ Software ✦ API keys ✦ Source code ✦ Automations ✦ Templates ✦ Software ✦ API keys ✦ </div></div>
-<section class="sec"><h2 data-r>The catalog</h2>{% for p in products %}{{ row(p) }}{% else %}<p class="mute">Products appear here once they're published.</p>{% endfor %}<p style="margin-top:28px"><a class="btn o" href="/products">See everything</a></p></section>
-<section class="trio">{% for i in (1,2,3) %}<div data-r><h3>{{ S['t%d_h'|format(i)] }}</h3><p>{{ S['t%d_p'|format(i)] }}</p></div>{% endfor %}</section>
+<section><div class="sh"><h2 data-r>The catalog</h2><a class="btn o s" href="/products">See everything</a></div>
+<div class="grid">{% set rest = products[1:] if products|length > 1 else products %}{% for p in rest %}{{ card(p) }}{% else %}<p class="mute">Products appear here once they're published.</p>{% endfor %}</div></section>
+<section class="band"><div class="in"><h2 data-r>{{ S.how_title }}</h2><div class="steps">{% for i in (1,2,3) %}<div class="step" data-r><b>0{{ i }}</b><h3>{{ S['t%d_h'|format(i)] }}</h3><p>{{ S['t%d_p'|format(i)] }}</p></div>{% endfor %}</div></div></section>
+<section class="cta2"><h2 data-r>{{ S.cta_title }}</h2><p data-r>{{ S.cta_sub }}</p><a class="btn" href="/products" data-r>{{ S.cta_text }}</a></section>
 {% endblock %}

@@ -1,5 +1,5 @@
-{% extends "base.html" %}{% from "_m.html" import row with context %}
+{% extends "base.html" %}{% from "_m.html" import card with context %}
 {% block title %}Shop | {{ S.site_name }}{% endblock %}
-{% block body %}<section class="sec"><h1 style="font-size:clamp(38px,6vw,72px)">Catalog</h1>
+{% block body %}<section class="sec"><p class="eyebrow">Catalog</p><h1 style="font-size:clamp(40px,6vw,84px)">Everything in the shop</h1>
 <div class="chips"><a href="/products" class="{{ 'on' if not kind }}">All</a>{% for k in kinds %}<a href="/products?kind={{ k|urlencode }}" class="{{ 'on' if k==kind }}">{{ k }}</a>{% endfor %}</div>
-{% for p in products %}{{ row(p) }}{% else %}<p class="mute">Nothing here yet.</p>{% endfor %}</section>{% endblock %}
+<div class="grid">{% for p in products %}{{ card(p) }}{% else %}<p class="mute">Nothing here yet.</p>{% endfor %}</div></section>{% endblock %}

@@ -14,7 +14,7 @@ from fastapi.responses import RedirectResponse, FileResponse, PlainTextResponse,
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from itsdangerous import URLSafeTimedSerializer, BadSignature
-from sqlalchemy import create_engine, select, func, inspect, text, ForeignKey, String, Text
+from sqlalchemy import create_engine, select, func, inspect, text, ForeignKey, LargeBinary, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, Session, relationship
 from starlette.exceptions import HTTPException as HTTPEx
 from starlette.middleware.sessions import SessionMiddleware
@@ -60,7 +60,8 @@ class Product(Base):
     kind: Mapped[str] = mapped_column(String(40), default="Download")
     price_cents: Mapped[int] = mapped_column(default=0)
     per: Mapped[str] = mapped_column(String(10), default="")  # "" one-time, or "month"
-    ls_variant: Mapped[str] = mapped_column(String(20), default="")
+    pay_link: Mapped[str] = mapped_column(String(500), default="")  # Payoneer payment link, admin only (money must reach the admin)
+    offer_link: Mapped[str] = mapped_column(String(500), default="")  # Payoneer link for the discounted price while an offer runs
     file_name: Mapped[str] = mapped_column(String(255), default="")
     link: Mapped[str] = mapped_column(String(500), default="")
     status: Mapped[str] = mapped_column(String(10), default="pending")  # live | hidden | pending
@@ -74,16 +75,12 @@ class Order(Base):
     code: Mapped[str] = mapped_column(String(12), unique=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
     product_id: Mapped[int] = mapped_column(ForeignKey("products.id"))
-    provider: Mapped[str] = mapped_column(String(10))  # ls | manual
+    provider: Mapped[str] = mapped_column(String(10))  # payoneer | manual
     status: Mapped[str] = mapped_column(String(10), default="pending")  # pending | paid | refunded
     amount_cents: Mapped[int] = mapped_column(default=0)
-    ls_order_id: Mapped[str | None] = mapped_column(String(40), unique=True, nullable=True)
     license: Mapped[str] = mapped_column(String(40), default="")
-    ls_sub_id: Mapped[str | None] = mapped_column(String(40), nullable=True, index=True)
-    sub_status: Mapped[str] = mapped_column(String(12), default="")  # active | past_due | paused | cancelled | expired
-    renews_at: Mapped[datetime | None] = mapped_column(nullable=True)
-    ends_at: Mapped[datetime | None] = mapped_column(nullable=True)
-    portal_url: Mapped[str] = mapped_column(String(500), default="")
+    note: Mapped[str] = mapped_column(String(200), default="")  # buyer's payment reference
+    claimed: Mapped[bool] = mapped_column(default=False)  # buyer says they have paid
     paid_until: Mapped[datetime | None] = mapped_column(nullable=True)  # manual (bKash/Nagad) subscriptions only
     created: Mapped[datetime] = mapped_column(default=datetime.utcnow)
     user: Mapped["User"] = relationship()
@@ -108,6 +105,10 @@ class Audit(Base):
     who: Mapped[str] = mapped_column(String(255))
     what: Mapped[str] = mapped_column(String(300))
     created: Mapped[datetime] = mapped_column(default=datetime.utcnow)
+class Blob(Base):  # product images live in the database, so they survive free hosts that wipe local disk
+    __tablename__ = "blobs"
+    name: Mapped[str] = mapped_column(String(80), primary_key=True)
+    data: Mapped[bytes] = mapped_column(LargeBinary)
 class Setting(Base):
     __tablename__ = "settings"
     key: Mapped[str] = mapped_column(String(60), primary_key=True)
@@ -124,12 +125,15 @@ DEF = {
  "hero_title": ("Homepage headline", "Software you buy once and actually own."),
  "hero_sub": ("Homepage subtext", "Source code, automations, templates and tools. Paid, unlocked and in your hands before you close the tab."),
  "cta_text": ("Main button text", "Browse the catalog"),
- "t1_h": ("Point 1 title", "Pay by card, anywhere"), "t1_p": ("Point 1 text", "Checkout runs on Lemon Squeezy, which handles cards, tax and receipts."),
+ "t1_h": ("Point 1 title", "Pay securely with Payoneer"), "t1_p": ("Point 1 text", "Use a secure Payoneer payment link, then tell me once you have paid."),
  "t2_h": ("Point 2 title", "bKash and Nagad for Bangladesh"), "t2_p": ("Point 2 text", "Choose Bangladesh when you register and the local option appears at checkout."),
  "t3_h": ("Point 3 title", "Unlocked after payment"), "t3_p": ("Point 3 text", "Files and keys reach your library only once the payment is verified."),
  "offer_on": ("Offer active (1 = on, 0 = off)", "0"), "offer_text": ("Offer banner text", "Launch week"),
  "offer_pct": ("Offer discount percent", "20"), "offer_ends": ("Offer ends, UTC (like 2026-12-01T00:00:00Z)", ""),
- "offer_code": ("Lemon Squeezy discount code applied at checkout", ""),
+ "pay_default": ("Default Payoneer payment link (used when a product has none)", ""),
+ "trust_bar": ("Trust bar items, separated by |", "Unlocked after payment | Yours to keep | Direct support | Pay with Payoneer"),
+ "how_title": ("How-it-works headline", "How it works"),
+ "cta_title": ("Closing headline", "Ready when you are."), "cta_sub": ("Closing subtext", "Pick a product, pay securely, and it unlocks in your library as soon as I confirm it."),
  "bd_phone": ("bKash / Nagad number", "+880 1XXX-XXXXXX"),
  "seller_share": ("Seller share of each sale, percent (used for payouts)", "80"),
  "seo_desc": ("Default meta description", "Source code, n8n automations, templates and software subscriptions with instant delivery."),
@@ -138,18 +142,26 @@ DEF = {
 PAGES = {"about": ("About", "<p>Tell your story here. Edit this page from the admin dashboard.</p>"),
  "contact": ("Contact", "<p>How to reach you.</p>"),
  "terms": ("Terms", "<p>By buying you receive a personal licence to use what you purchased. Do not resell, share or redistribute files, keys or source code unless the product page says you can.</p><p>Products are delivered to your account once payment is confirmed. Subscriptions renew until you cancel, and you keep access until the period you paid for ends. Products are provided as described, without a guarantee of uninterrupted service.</p><p><i>Starter text, not legal advice. Replace it with your own terms before launch.</i></p>"),
- "refunds": ("Refunds", "<p>Because digital products can be copied the moment they are delivered, sales are generally final. If a product does not work as described, contact me within 7 days of purchase and I will fix it or refund you.</p><p><i>Starter text. Edit it to match your policy and Lemon Squeezy's requirements.</i></p>"),
- "privacy": ("Privacy", "<p>I store your name, email, country and purchase history so I can deliver what you bought. Card payments are handled by Lemon Squeezy and I never see your card details. Emails are sent through Resend. If you sign in with Google I receive your name and verified email address only.</p><p>I do not sell your data. To see or delete your data, contact me.</p><p><i>Starter text, not legal advice. Review before launch.</i></p>")}
+ "refunds": ("Refunds", "<p>Because digital products can be copied the moment they are delivered, sales are generally final. If a product does not work as described, contact me within 7 days of purchase and I will fix it or refund you.</p><p><i>Starter text. Edit it to match your policy.</i></p>"),
+ "privacy": ("Privacy", "<p>I store your name, email, country and purchase history so I can deliver what you bought. Payments are made through Payoneer payment links and I never see your card details. Emails are sent through Resend. If you sign in with Google I receive your name and verified email address only.</p><p>I do not sell your data. To see or delete your data, contact me.</p><p><i>Starter text, not legal advice. Review before launch.</i></p>")}
 
-ADDS = {"products": {"image": "VARCHAR(80) DEFAULT ''"}, "orders": {"ls_sub_id": "VARCHAR(40)", "sub_status": "VARCHAR(12) DEFAULT ''", "renews_at": "TIMESTAMP", "ends_at": "TIMESTAMP", "portal_url": "VARCHAR(500) DEFAULT ''", "paid_until": "TIMESTAMP"},
+ADDS = {"products": {"image": "VARCHAR(80) DEFAULT ''", "pay_link": "VARCHAR(500) DEFAULT ''", "offer_link": "VARCHAR(500) DEFAULT ''"}, "orders": {"paid_until": "TIMESTAMP", "note": "VARCHAR(200) DEFAULT ''", "claimed": "BOOLEAN DEFAULT FALSE"},
         "users": {"wants_seller": "BOOLEAN DEFAULT FALSE", "totp": "VARCHAR(32) DEFAULT ''", "totp_last": "BIGINT DEFAULT 0"}}
-def migrate():  # adds columns introduced after a database was first created
+LEGACY = {"products": ["ls_variant"], "orders": ["ls_order_id", "ls_sub_id", "sub_status", "renews_at", "ends_at", "portal_url"]}  # from the removed Lemon Squeezy integration
+def migrate():  # adds new columns and drops the old Lemon Squeezy ones on databases created earlier
     insp = inspect(engine)
     with engine.begin() as c:
         for t, cols in ADDS.items():
             have = {x["name"] for x in insp.get_columns(t)}
             for n, ddl in cols.items():
                 if n not in have: c.execute(text(f"ALTER TABLE {t} ADD COLUMN {n} {ddl}"))
+    for t, cols in LEGACY.items():
+        have = {x["name"] for x in inspect(engine).get_columns(t)}
+        for n in cols:
+            if n in have:
+                try:
+                    with engine.begin() as c: c.execute(text(f"ALTER TABLE {t} DROP COLUMN {n}"))
+                except Exception as e: print(f"[migrate] could not drop {t}.{n}: {e}")  # old SQLite files: delete the .db and start fresh
 
 def init():
     Base.metadata.create_all(engine); migrate()
@@ -188,7 +200,7 @@ async def headers(request: Request, call_next):
     r = await call_next(request)
     r.headers.update({"X-Content-Type-Options": "nosniff", "X-Frame-Options": "DENY", "Referrer-Policy": "strict-origin-when-cross-origin",
         "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
-        "Content-Security-Policy": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; frame-ancestors 'none'; base-uri 'self'; form-action 'self' https://*.lemonsqueezy.com"})
+        "Content-Security-Policy": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"})
     if PROD: r.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
     return r
 
@@ -252,21 +264,22 @@ def fulfil(o):
 
 def has_access(o):
     if o.status != "paid": return False
-    if o.provider == "manual" and o.product.per: return bool(o.paid_until) and o.paid_until > datetime.utcnow()
-    if not o.ls_sub_id or o.sub_status in ("", "active", "past_due"): return True
-    return o.sub_status == "cancelled" and bool(o.ends_at) and o.ends_at > datetime.utcnow()  # cancelled keeps access until the paid period ends
+    if o.product.per: return bool(o.paid_until) and o.paid_until > datetime.utcnow()  # monthly products lapse unless renewed
+    return True
+def pay_url(p, S):
+    if S["offer_on"] == "1" and p.offer_link: return p.offer_link
+    return p.pay_link or S["pay_default"]
 def record(db, o, ref, cents):
     if not db.scalar(select(Payment.id).where(Payment.ref == ref)): db.add(Payment(order_id=o.id, ref=ref, amount_cents=cents))
-def pdt(v): return datetime.fromisoformat(v.replace("Z", "+00:00")).astimezone(timezone.utc).replace(tzinfo=None) if v else None
-def save_image(up):
+def save_image(up, db):
     data = up.file.read(3 * 1024 * 1024 + 1)
     try:
         if len(data) > 3 * 1024 * 1024: raise ValueError
         im = Image.open(io.BytesIO(data)); im.verify(); im = Image.open(io.BytesIO(data))
         if im.format not in ("PNG", "JPEG", "WEBP"): raise ValueError
         im = im.convert("RGBA" if im.mode in ("RGBA", "LA", "P") else "RGB"); im.thumbnail((1600, 1600))
-        name = uuid.uuid4().hex + ".webp"; im.save(DATA / "img" / name, "WEBP", quality=85)  # re-encoding strips metadata and any payload
-        return name
+        name = uuid.uuid4().hex + ".webp"; buf = io.BytesIO(); im.save(buf, "WEBP", quality=85)  # re-encoding strips metadata and any payload
+        db.add(Blob(name=name, data=buf.getvalue())); return name
     except Exception: raise ValueError("Upload a PNG, JPG or WebP image under 3 MB.")
 
 @app.exception_handler(HTTPEx)
@@ -340,26 +353,29 @@ def account(request: Request, db=Depends(get_db)):
 def account_save(request: Request, db=Depends(get_db), _=Depends(csrf), name: str = Form(""), country: str = Form("")):
     u = need(request, db); u.name, u.country = name.strip()[:120], country.strip()[:60]; db.commit(); flash(request, "Profile saved."); return go("/account")
 @app.post("/buy/{pid}")
-def buy(pid: int, request: Request, db=Depends(get_db), _=Depends(csrf), provider: str = Form("ls")):
+def buy(pid: int, request: Request, db=Depends(get_db), _=Depends(csrf), provider: str = Form("payoneer")):
     u = need(request, db); limit(request, "buy", 15); p = db.get(Product, pid); S = settings(db)
     if not p or p.status != "live": raise HTTPEx(404)
+    if provider not in ("payoneer", "manual"): raise HTTPEx(400, "Unknown payment method.")
     if provider == "manual" and u.country != "Bangladesh": raise HTTPEx(403, "Manual payment is only for buyers in Bangladesh.")
-    o = Order(code=secrets.token_hex(4).upper(), user_id=u.id, product_id=p.id, provider=provider, amount_cents=price(p, S)[0])
-    db.add(o); db.commit()
-    if provider == "manual": return go(f"/order/{o.code}")
-    if not (E("LS_API_KEY") and p.ls_variant): raise HTTPEx(503, "Card checkout isn't connected for this product yet.")
-    cd = {"email": u.email, "name": u.name, "custom": {"order_code": o.code}}
-    if S["offer_on"] == "1" and S["offer_code"]: cd["discount_code"] = S["offer_code"]
-    r = httpx.post("https://api.lemonsqueezy.com/v1/checkouts", timeout=15, headers={"Authorization": "Bearer " + E("LS_API_KEY"), "Accept": "application/vnd.api+json", "Content-Type": "application/vnd.api+json"},
-        json={"data": {"type": "checkouts", "attributes": {"checkout_data": cd, "product_options": {"redirect_url": f"{BASE}/account"}},
-              "relationships": {"store": {"data": {"type": "stores", "id": E("LS_STORE_ID", "")}}, "variant": {"data": {"type": "variants", "id": p.ls_variant}}}}})
-    if r.status_code >= 300: raise HTTPEx(502, "The payment provider didn't respond. Try again shortly.")
-    return go(r.json()["data"]["attributes"]["url"])
+    if provider == "payoneer" and not pay_url(p, S): raise HTTPEx(503, "Payment isn't set up for this product yet. Please contact me.")
+    o = db.scalar(select(Order).where(Order.user_id == u.id, Order.product_id == p.id, Order.provider == provider, Order.status == "pending"))
+    if not o: o = Order(code=secrets.token_hex(4).upper(), user_id=u.id, product_id=p.id, provider=provider); db.add(o)
+    if not o.claimed: o.amount_cents = price(p, S)[0]
+    db.commit(); return go(f"/order/{o.code}")
+@app.post("/order/{code}/claim")
+def claim(code: str, request: Request, db=Depends(get_db), _=Depends(csrf), note: str = Form("")):
+    u = need(request, db); limit(request, "claim", 10)
+    o = db.scalar(select(Order).where(Order.code == code, Order.user_id == u.id, Order.status == "pending"))
+    if not o: raise HTTPEx(404)
+    o.claimed, o.note = True, note.strip()[:200]; db.commit()
+    if E("ADMIN_EMAIL"): mail(E("ADMIN_EMAIL"), "Payment to confirm", f"<p>{_html.escape(u.email)} says they paid for <b>{_html.escape(o.product.title)}</b> ({fmt(o.amount_cents)}, order {o.code}, via {o.provider}). Reference: {_html.escape(o.note) or 'none'}. Confirm in Admin &gt; Orders.</p>")
+    flash(request, "Thanks! I'll check and unlock your product as soon as the payment shows up."); return go(f"/order/{o.code}")
 @app.get("/order/{code}")
 def order(code: str, request: Request, db=Depends(get_db)):
     u = need(request, db); o = db.scalar(select(Order).where(Order.code == code, Order.user_id == u.id))
     if not o: raise HTTPEx(404)
-    return render(request, db, "order.html", o=o)
+    return render(request, db, "order.html", o=o, pay=pay_url(o.product, settings(db)) if o.provider == "payoneer" else "")
 @app.get("/download/{code}")
 def download(code: str, request: Request, db=Depends(get_db)):
     u = need(request, db); o = db.scalar(select(Order).where(Order.code == code, Order.user_id == u.id))
@@ -368,35 +384,6 @@ def download(code: str, request: Request, db=Depends(get_db)):
     if p.file_name and (DATA / "files" / p.file_name).is_file(): return FileResponse(DATA / "files" / p.file_name, filename=p.slug + Path(p.file_name).suffix)
     if p.link: return go(p.link)
     raise HTTPEx(404, "Nothing to download for this product.")
-
-@app.post("/webhooks/lemonsqueezy")
-async def webhook(request: Request, db=Depends(get_db)):
-    raw = await request.body(); sig = request.headers.get("X-Signature", ""); secret = E("LS_WEBHOOK_SECRET") or ""
-    if not secret or not hmac.compare_digest(sig, hmac.new(secret.encode(), raw, hashlib.sha256).hexdigest()): raise HTTPEx(401, "bad signature")
-    ev = json.loads(raw); name = ev["meta"]["event_name"]; d = ev["data"]; a = d["attributes"]
-    code = (ev["meta"].get("custom_data") or {}).get("order_code", "")
-    is_sub = name.startswith("subscription_") and not name.startswith("subscription_payment")
-    sub = str(d["id"]) if is_sub else str(a.get("subscription_id") or "")
-    o = db.scalar(select(Order).where(Order.code == code)) if code else None
-    if not o and sub: o = db.scalar(select(Order).where(Order.ls_sub_id == sub))
-    if not o: return {"ok": True}  # unknown order: acknowledge so Lemon Squeezy stops retrying
-    fresh = False
-    if name == "order_created" and a.get("status") == "paid":
-        fresh = o.status != "paid"
-        if fresh: o.ls_order_id = str(d["id"]); o.amount_cents = int(a.get("total", o.amount_cents)); fulfil(o)
-        db.flush(); record(db, o, "ls-order-" + str(d["id"]), int(a.get("total", 0)))
-    elif name == "order_refunded": o.status = "refunded"
-    elif name == "subscription_payment_success": o.sub_status = "active"; db.flush(); record(db, o, "ls-inv-" + str(d["id"]), int(a.get("total", 0)))
-    elif name == "subscription_payment_failed": o.sub_status = "past_due"
-    elif is_sub:
-        o.ls_sub_id = sub; st = {"on_trial": "active", "active": "active", "past_due": "past_due", "unpaid": "past_due", "paused": "paused", "cancelled": "cancelled", "expired": "expired"}
-        o.sub_status = st.get(a.get("status"), o.sub_status or "active"); o.renews_at, o.ends_at = pdt(a.get("renews_at")), pdt(a.get("ends_at"))
-        url = (a.get("urls") or {}).get("customer_portal") or ""
-        if url.startswith("https://"): o.portal_url = url[:500]
-    db.commit()
-    if fresh: notify_paid(o)
-    if name == "subscription_payment_failed" and o.portal_url: mail(o.user.email, "Your payment failed", f'<p>We couldn\'t renew {_html.escape(o.product.title)}. Please update your card in the <a href="{o.portal_url}">billing portal</a> to keep access.</p>')
-    return {"ok": True}
 
 # ---------- seller + admin product studio ----------
 @app.get("/studio")
@@ -414,13 +401,19 @@ def studio_edit(request: Request, id: int = 0, db=Depends(get_db)):
     return render(request, db, "edit.html", p=p)
 @app.post("/studio/edit")
 def studio_save(request: Request, db=Depends(get_db), _=Depends(csrf), id: int = Form(0), title: str = Form(), summary: str = Form(""), body: str = Form(""), kind: str = Form("Download"),
-                price_usd: float = Form(0), per: str = Form(""), ls_variant: str = Form(""), link: str = Form(""), status: str = Form("pending"), file: UploadFile = File(None), image: UploadFile = File(None)):
+                price_usd: float = Form(0), per: str = Form(""), link: str = Form(""), pay_link: str = Form(None), offer_link: str = Form(None), status: str = Form("pending"), file: UploadFile = File(None), image: UploadFile = File(None)):
     u = need(request, db, "seller", "admin"); p = db.get(Product, id) if id else Product(owner_id=u.id, slug="")
     if id and (not p or (u.role == "seller" and p.owner_id != u.id)): raise HTTPEx(404)
     p.title, p.summary, p.body, p.kind = title.strip()[:160], summary.strip()[:300], clean(body), kind.strip()[:40]
-    p.price_cents, p.per, p.ls_variant = max(0, round(price_usd * 100)), ("month" if per == "month" else ""), re.sub(r"\D", "", ls_variant)[:20]
+    p.price_cents, p.per = max(0, round(price_usd * 100)), ("month" if per == "month" else "")
     if link and not link.startswith("https://"): flash(request, "Product links must start with https://"); return go(f"/studio/edit?id={id}")
     p.link = link.strip()[:500]
+    if u.role == "admin":  # only the admin may set where customers pay; a seller can never redirect money
+        for attr, val in (("pay_link", pay_link), ("offer_link", offer_link)):
+            if val is None: continue
+            val = val.strip()[:500]
+            if val and not val.startswith("https://"): flash(request, "Payment links must start with https://"); return go(f"/studio/edit?id={id}")
+            setattr(p, attr, val)
     if u.role == "admin" and status in ("live", "hidden", "pending"): p.status = status
     elif u.role == "seller": p.status = "pending"  # every seller change needs re-approval
     if not p.slug:
@@ -436,9 +429,9 @@ def studio_save(request: Request, db=Depends(get_db), _=Depends(csrf), id: int =
                 f.write(chunk)
         p.file_name = name
     if image and image.filename:
-        try: new_img = save_image(image)
+        try: new_img = save_image(image, db)
         except ValueError as e: flash(request, str(e)); return go(f"/studio/edit?id={id}")
-        if p.image: (DATA / "img" / p.image).unlink(missing_ok=True)
+        if p.image: db.query(Blob).filter_by(name=p.image).delete()
         p.image = new_img
     db.add(p); audit(db, u, f"{'Edited' if id else 'Created'} product {p.title} ({p.status})"); db.commit(); flash(request, "Saved." if u.role == "admin" else "Saved. It goes live after admin approval."); return go("/studio")
 
@@ -450,10 +443,11 @@ def admin(request: Request, db=Depends(get_db)):
     sh = share(db); now = datetime.utcnow()
     sellers = db.scalars(select(User).where(User.role != "admin", (User.role == "seller") | User.id.in_(select(Product.owner_id).where(Product.owner_id.is_not(None))))).all()
     bals = [(x, balance(db, x.id, sh)) for x in sellers]
-    expiring = db.scalars(select(Order).where(Order.provider == "manual", Order.status == "paid", Order.paid_until.is_not(None), Order.paid_until < now + timedelta(days=7)).order_by(Order.paid_until)).all()
+    expiring = db.scalars(select(Order).where(Order.status == "paid", Order.paid_until.is_not(None), Order.paid_until < now + timedelta(days=7)).order_by(Order.paid_until)).all()
     log = db.scalars(select(Audit).order_by(Audit.id.desc()).limit(40)).all()
-    return render(request, db, "admin.html", DEF=DEF, paid=paid, bals=bals, sh=sh, expiring=expiring, log=log, users=db.scalars(select(User).order_by(User.created.desc())).all(),
-                  orders=db.scalars(select(Order).order_by(Order.created.desc()).limit(60)).all(), pending=db.scalar(select(func.count(Product.id)).where(Product.status == "pending")))
+    claims = db.scalar(select(func.count(Order.id)).where(Order.status == "pending", Order.claimed == True))  # noqa: E712
+    return render(request, db, "admin.html", DEF=DEF, paid=paid, bals=bals, sh=sh, expiring=expiring, log=log, claims=claims, users=db.scalars(select(User).order_by(User.created.desc())).all(),
+                  orders=db.scalars(select(Order).order_by(Order.status != "pending", Order.claimed.desc(), Order.created.desc()).limit(60)).all(), pending=db.scalar(select(func.count(Product.id)).where(Product.status == "pending")))
 @app.post("/admin/settings")
 async def admin_settings(request: Request, db=Depends(get_db)):
     adm = need(request, db, "admin"); f = await request.form(); csrf(request, f.get("csrf_token", ""))
@@ -475,7 +469,7 @@ def admin_order(oid: int, request: Request, db=Depends(get_db), _=Depends(csrf),
         fulfil(o); db.flush(); fresh = True
         if not db.scalar(select(Payment.id).where(Payment.order_id == o.id)): record(db, o, "manual-" + o.code, o.amount_cents)
         if o.product.per: o.paid_until = nxt()
-    elif action == "renew" and o.status == "paid" and o.provider == "manual" and o.product.per:
+    elif action == "renew" and o.status == "paid" and o.product.per:
         o.paid_until = nxt(); db.flush(); record(db, o, f"manual-{o.code}-{int(time.time())}", o.amount_cents); fresh = True
     elif action == "refunded": o.status = "refunded"
     audit(db, adm, f"Order {o.code}: {action}"); db.commit()
@@ -578,10 +572,10 @@ def google_cb(request: Request, code: str = "", state: str = "", db=Depends(get_
 
 # ---------- product images ----------
 @app.get("/img/{name}")
-def img(name: str):
-    f = DATA / "img" / name
-    if not re.fullmatch(r"[0-9a-f]{32}\.webp", name) or not f.is_file(): raise HTTPEx(404)
-    return FileResponse(f, media_type="image/webp", headers={"Cache-Control": "public, max-age=31536000, immutable"})
+def img(name: str, db=Depends(get_db)):
+    b = db.get(Blob, name) if re.fullmatch(r"[0-9a-f]{32}\.webp", name) else None
+    if not b: raise HTTPEx(404)
+    return Response(b.data, media_type="image/webp", headers={"Cache-Control": "public, max-age=31536000, immutable"})
 
 # ---------- SEO ----------
 @app.get("/robots.txt")
