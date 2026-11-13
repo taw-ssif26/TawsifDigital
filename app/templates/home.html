@@ -10,5 +10,5 @@
 <section><div class="sh"><h2 data-r>The catalog</h2><a class="btn o s" href="/products">See everything</a></div>
 <div class="grid">{% set rest = products[1:] if products|length > 1 else products %}{% for p in rest %}{{ card(p) }}{% else %}<p class="mute">Products appear here once they're published.</p>{% endfor %}</div></section>
 <section class="band"><div class="in"><h2 data-r>{{ S.how_title }}</h2><div class="steps">{% for i in (1,2,3) %}<div class="step" data-r><b>0{{ i }}</b><h3>{{ S['t%d_h'|format(i)] }}</h3><p>{{ S['t%d_p'|format(i)] }}</p></div>{% endfor %}</div></div></section>
-<section class="cta2"><h2 data-r>{{ S.cta_title }}</h2><p data-r>{{ S.cta_sub }}</p><a class="btn" href="/products" data-r>{{ S.cta_text }}</a></section>
+<section class="cta2"><h2 data-r>{{ S.cta_title }}</h2><p data-r>{{ S.cta_sub }}</p><div class="cta" style="justify-content:center" data-r><a class="btn" href="/products">{{ S.cta_text }}</a><a class="btn o" href="/request">Request custom work</a></div></section>
 {% endblock %}

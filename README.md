@@ -15,6 +15,9 @@ Tests: `pip install -r requirements-dev.txt && pytest`
 Only the admin can set payment links, so a seller can never redirect money to themselves. Monthly products grant 31 days per confirmation: use *Renew +1 month* each cycle (expiring ones are listed in Admin).
 When you run an offer, a Payoneer link has a fixed amount, so give each product an offer link at the discounted price, or buyers will pay the old amount. The order page always shows the amount due; confirm it matches before marking paid.
 
+## Custom work requests
+Customers (signed in, so you can reach them) send a request at **/request**: title, type, description, optional budget, deadline and contact. You get an email, and it appears at the top of Admin > Custom requests (newest unhandled first, counted in the stats). Open one to chat with the customer (each message emails the other side), set a status, enter a quote and a Payoneer link for that quote, and keep a private note the customer never sees. Saving with a changed status or quote emails the customer. They accept or decline the quote with one click, and only after accepting do they see your Payoneer link. Customers can cancel before a quote is accepted. The page text and an on/off switch ("Accepting custom requests") are in Admin > Site content. Spam protection: account required, a hidden honeypot field, and 5 requests per hour per visitor. Custom-work income is not counted in the Admin revenue figure (that tracks shop orders only).
+
 ## Free products
 Set a product's price to 0 and it becomes free for anyone with a verified account: the button reads "Get it free", there is no payment link, no order to approve and no license key, and it goes straight into the buyer's library. Visitors without an account are sent to register. Free products never lapse, even if set to monthly, and they don't count toward revenue or seller payouts. (A product sold on its own website with price 0 is not free here: it simply hides the price.)
 

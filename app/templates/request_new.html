@@ -1,0 +1,13 @@
+{% extends "base.html" %}{% block title %}Custom work | {{ S.site_name }}{% endblock %}{% block desc %}{{ S.request_intro }}{% endblock %}
+{% block body %}<div class="two"><section><p class="eyebrow">Custom work</p><h1 style="font-size:clamp(38px,5.4vw,72px)">{{ S.request_title }}</h1><p class="lead">{{ S.request_intro }}</p>
+{% if S.request_open != '1' %}<div class="card"><p>I'm not taking custom requests right now. Check back soon.</p></div>
+{% elif not u %}<div class="card st"><p>Create a free account or sign in to send a request, so I can reply to you and you can track it.</p><div class="cta"><a class="btn" href="/register">Create account</a><a class="btn o" href="/login">Sign in</a></div></div>
+{% else %}<form method="post" class="st card" data-tilt><input type="hidden" name="csrf_token" value="{{ csrf }}"><input name="website" tabindex="-1" autocomplete="off" aria-hidden="true" style="position:absolute;left:-9999px;width:1px">
+<label>What should I call it?<input name="title" required minlength="4" maxlength="160" placeholder="e.g. Inventory tracker for my shop"></label>
+<label>Type<select name="kind">{% for k in kinds %}<option>{{ k }}</option>{% endfor %}</select></label>
+<label>Describe what you need (who uses it, what it should do, anything it must connect to)<textarea name="details" required minlength="30" maxlength="5000" style="min-height:200px"></textarea></label>
+<label>Budget (optional)<input name="budget" maxlength="60" placeholder="e.g. $500 to $800"></label>
+<label>When do you need it? (optional)<input name="deadline" maxlength="60" placeholder="e.g. end of next month"></label>
+<label>Best way to reach you besides email (optional)<input name="contact" maxlength="120" placeholder="e.g. WhatsApp +880..."></label>
+<button class="btn">Send request</button></form>{% endif %}</section>
+<aside class="card"><h3 style="font-size:26px;margin-bottom:14px">What happens next</h3><ol class="ticks" style="list-style:none"><li>I read your request and reply here, with questions if needed.</li><li>I send a quote. You accept or decline in one click.</li><li>You pay through a secure Payoneer link and I build it, with updates here.</li></ol></aside></div>{% endblock %}

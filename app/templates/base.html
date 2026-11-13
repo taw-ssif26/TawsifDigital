@@ -12,14 +12,14 @@
 <div id="ld" aria-hidden="true"><b>{{ S.site_name }}</b><u></u></div><canvas id="fxc" aria-hidden="true"></canvas><div class="grain"></div><div id="glow"></div><div id="ring"></div><div id="bar"></div>
 {% if S.offer_on == '1' %}<div id="offer" data-end="{{ S.offer_ends }}">{{ S.offer_text }} · {{ S.offer_pct }}% off everything{% if S.offer_ends %} · ends in <span id="cd"></span>{% endif %}</div>{% endif %}
 <header><div class="w hd"><a class="logo" href="/">{{ S.site_name }}</a>
-<nav><a href="/products">Shop</a>{% for p in pages if p.slug in ('about','contact') %}<a href="/pages/{{ p.slug }}">{{ p.title }}</a>{% endfor %}
+<nav><a href="/products">Shop</a><a href="/request">Custom work</a>{% for p in pages if p.slug in ('about','contact') %}<a href="/pages/{{ p.slug }}">{{ p.title }}</a>{% endfor %}
 {% if u %}{% if u.role == 'admin' %}<a href="/admin">Admin</a>{% endif %}{% if u.role in ('admin','seller') %}<a href="/studio">Studio</a>{% endif %}<a href="/account">Account</a>
 <form method="post" action="/logout" style="display:inline"><input type="hidden" name="csrf_token" value="{{ csrf }}"><button class="lnk">Sign out</button></form>
 {% else %}<a href="/login">Sign in</a>{% endif %}
 <div class="seg" role="group" aria-label="Theme"><button data-t="light">Light</button><button data-t="dark">Dark</button><button data-t="fx">Effects</button></div></nav></div></header>
 <main><div class="w">{% if flash %}<p class="msg" role="status">{{ flash }}</p>{% endif %}{% block body %}{% endblock %}</div></main>
 <footer><div class="w"><div class="fg"><div><a class="logo" href="/" style="color:var(--fg);font-size:28px;margin-bottom:12px">{{ S.site_name }}</a><p style="max-width:34ch">{{ S.footer }}</p></div>
-<div><h4>Shop</h4><a href="/products">All products</a>{% if u %}<a href="/account">Your library</a>{% else %}<a href="/register">Create account</a><a href="/login">Sign in</a>{% endif %}</div>
+<div><h4>Shop</h4><a href="/products">All products</a><a href="/request">Custom work</a>{% if u %}<a href="/account">Your library</a>{% else %}<a href="/register">Create account</a><a href="/login">Sign in</a>{% endif %}</div>
 <div><h4>Info</h4>{% for p in pages %}<a href="/pages/{{ p.slug }}">{{ p.title }}</a>{% endfor %}</div></div>
 <p class="fine">© {{ S.site_name }}. All rights reserved.</p></div></footer>
 </body></html>

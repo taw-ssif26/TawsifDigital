@@ -111,6 +111,32 @@ class Blob(Base):  # product images live in the database, so they survive free h
     __tablename__ = "blobs"
     name: Mapped[str] = mapped_column(String(80), primary_key=True)
     data: Mapped[bytes] = mapped_column(LargeBinary)
+STATUS = {"new": "Received", "reviewing": "Reviewing", "quoted": "Quote sent", "accepted": "Accepted", "in_progress": "In progress", "delivered": "Delivered", "declined": "Declined", "cancelled": "Cancelled"}
+KINDS = ["Software or app", "Automation or workflow", "Website", "Integration or API", "Something else"]
+class CustomRequest(Base):  # a customer asking for something built
+    __tablename__ = "requests"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    title: Mapped[str] = mapped_column(String(160))
+    kind: Mapped[str] = mapped_column(String(40), default="Something else")
+    details: Mapped[str] = mapped_column(Text, default="")
+    budget: Mapped[str] = mapped_column(String(60), default="")
+    deadline: Mapped[str] = mapped_column(String(60), default="")
+    contact: Mapped[str] = mapped_column(String(120), default="")
+    status: Mapped[str] = mapped_column(String(12), default="new")
+    quote_cents: Mapped[int] = mapped_column(default=0)
+    pay_link: Mapped[str] = mapped_column(String(500), default="")  # Payoneer link for the quote, set by admin
+    admin_note: Mapped[str] = mapped_column(Text, default="")  # private, never shown to the customer
+    created: Mapped[datetime] = mapped_column(default=datetime.utcnow)
+    updated: Mapped[datetime] = mapped_column(default=datetime.utcnow)
+    user: Mapped["User"] = relationship()
+class RequestMsg(Base):
+    __tablename__ = "request_msgs"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    request_id: Mapped[int] = mapped_column(ForeignKey("requests.id"), index=True)
+    from_admin: Mapped[bool] = mapped_column(default=False)
+    body: Mapped[str] = mapped_column(Text)
+    created: Mapped[datetime] = mapped_column(default=datetime.utcnow)
 class Setting(Base):
     __tablename__ = "settings"
     key: Mapped[str] = mapped_column(String(60), primary_key=True)
@@ -137,6 +163,9 @@ DEF = {
  "how_title": ("How-it-works headline", "How it works"),
  "cta_title": ("Closing headline", "Ready when you are."), "cta_sub": ("Closing subtext", "Pick a product, pay securely, and it unlocks in your library as soon as I confirm it."),
  "bd_phone": ("bKash / Nagad number", "+880 1XXX-XXXXXX"),
+ "request_open": ("Accepting custom requests (1 = yes, 0 = no)", "1"),
+ "request_title": ("Custom work page headline", "Need something built for you?"),
+ "request_intro": ("Custom work page intro", "Tell me what you need: a system, an app, an automation. I'll review it, reply with questions or a quote, and build it once you agree."),
  "seller_share": ("Seller share of each sale, percent (used for payouts)", "80"),
  "seo_desc": ("Default meta description", "Source code, n8n automations, templates and software subscriptions with instant delivery."),
  "footer": ("Footer line", "Built and supported by Tawsif."),
@@ -231,7 +260,7 @@ def render(request, db, name, status=200, **ctx):
     S = settings(db)
     request.session.setdefault("csrf", secrets.token_urlsafe(24))
     ctx.update(request=request, S=S, u=me(request, db), csrf=request.session["csrf"], flash=request.session.pop("flash", None), base=BASE,
-               fmt=fmt, show=lambda p: price(p, S), access=has_access, google=bool(G_ID), pages=db.scalars(select(Page)).all())
+               fmt=fmt, show=lambda p: price(p, S), access=has_access, rstatus=STATUS, google=bool(G_ID), pages=db.scalars(select(Page)).all())
     return T.TemplateResponse(request, name, ctx, status_code=status)
 def mail(to, subject, html):  # Brevo transactional API; without a key the message is printed to the console
     key = E("BREVO_API_KEY")
@@ -357,7 +386,7 @@ def logout(request: Request, _=Depends(csrf)): request.session.clear(); return g
 @app.get("/account")
 def account(request: Request, db=Depends(get_db)):
     u = need(request, db)
-    return render(request, db, "account.html", new2fa=request.session.get("new2fa"), orders=db.scalars(select(Order).where(Order.user_id == u.id).order_by(Order.created.desc())).all())
+    return render(request, db, "account.html", reqs=db.scalars(select(CustomRequest).where(CustomRequest.user_id == u.id).order_by(CustomRequest.created.desc())).all(), new2fa=request.session.get("new2fa"), orders=db.scalars(select(Order).where(Order.user_id == u.id).order_by(Order.created.desc())).all())
 @app.post("/account")
 def account_save(request: Request, db=Depends(get_db), _=Depends(csrf), name: str = Form(""), country: str = Form("")):
     u = need(request, db); u.name, u.country = name.strip()[:120], country.strip()[:60]; db.commit(); flash(request, "Profile saved."); return go("/account")
@@ -464,7 +493,9 @@ def admin(request: Request, db=Depends(get_db)):
     expiring = db.scalars(select(Order).where(Order.status == "paid", Order.paid_until.is_not(None), Order.paid_until < now + timedelta(days=7)).order_by(Order.paid_until)).all()
     log = db.scalars(select(Audit).order_by(Audit.id.desc()).limit(40)).all()
     claims = db.scalar(select(func.count(Order.id)).where(Order.status == "pending", Order.claimed == True))  # noqa: E712
-    return render(request, db, "admin.html", DEF=DEF, paid=paid, bals=bals, sh=sh, expiring=expiring, log=log, claims=claims, users=db.scalars(select(User).order_by(User.created.desc())).all(),
+    reqs = db.scalars(select(CustomRequest).order_by(CustomRequest.status != "new", CustomRequest.updated.desc()).limit(60)).all()
+    new_reqs = db.scalar(select(func.count(CustomRequest.id)).where(CustomRequest.status == "new"))
+    return render(request, db, "admin.html", DEF=DEF, paid=paid, bals=bals, sh=sh, expiring=expiring, log=log, claims=claims, reqs=reqs, new_reqs=new_reqs, users=db.scalars(select(User).order_by(User.created.desc())).all(),
                   orders=db.scalars(select(Order).order_by(Order.status != "pending", Order.claimed.desc(), Order.created.desc()).limit(60)).all(), pending=db.scalar(select(func.count(Product.id)).where(Product.status == "pending")))
 @app.post("/admin/settings")
 async def admin_settings(request: Request, db=Depends(get_db)):
@@ -540,6 +571,58 @@ def tfa_login(request: Request, db=Depends(get_db), _=Depends(csrf), code: str =
     u.totp_last = c; db.commit(); request.session.clear(); request.session["uid"] = u.id
     return go("/admin" if u.role == "admin" else "/account")
 
+# ---------- custom work requests ----------
+def req_for(request, db, rid):
+    u = need(request, db); r = db.get(CustomRequest, rid)
+    if not r or (u.role != "admin" and r.user_id != u.id): raise HTTPEx(404)  # customers only ever see their own
+    return u, r
+def tell_admin(r, what): 
+    if E("ADMIN_EMAIL"): mail(E("ADMIN_EMAIL"), f"Custom request: {what}", f'<p><b>{_html.escape(r.title)}</b> from {_html.escape(r.user.email)}.</p><p><a href="{BASE}/request/{r.id}">Open it</a></p>')
+@app.get("/request")
+def request_form(request: Request, db=Depends(get_db)): return render(request, db, "request_new.html", kinds=KINDS)
+@app.post("/request")
+def request_create(request: Request, db=Depends(get_db), _=Depends(csrf), title: str = Form(), kind: str = Form("Something else"), details: str = Form(), budget: str = Form(""),
+                   deadline: str = Form(""), contact: str = Form(""), website: str = Form("")):
+    u = need(request, db)
+    if settings(db)["request_open"] != "1": raise HTTPEx(403, "Custom requests are closed right now.")
+    if website: return go("/")  # honeypot: real people never fill the hidden field
+    limit(request, "req", 5, 3600); title, details = title.strip()[:160], details.strip()[:5000]
+    if len(title) < 4 or len(details) < 30: flash(request, "Please add a title and describe what you need in a few sentences."); return go("/request")
+    r = CustomRequest(user_id=u.id, title=title, kind=kind if kind in KINDS else KINDS[-1], details=details, budget=budget.strip()[:60], deadline=deadline.strip()[:60], contact=contact.strip()[:120])
+    db.add(r); db.commit(); tell_admin(r, "new request")
+    flash(request, "Request sent. I'll review it and reply here."); return go(f"/request/{r.id}")
+@app.get("/request/{rid}")
+def request_view(rid: int, request: Request, db=Depends(get_db)):
+    u, r = req_for(request, db, rid)
+    return render(request, db, "request_view.html", r=r, msgs=db.scalars(select(RequestMsg).where(RequestMsg.request_id == r.id).order_by(RequestMsg.id)).all())
+@app.post("/request/{rid}/msg")
+def request_msg(rid: int, request: Request, db=Depends(get_db), _=Depends(csrf), body: str = Form()):
+    u, r = req_for(request, db, rid); limit(request, "rmsg", 20, 3600); body = body.strip()[:2000]
+    if body:
+        adm = u.role == "admin"; db.add(RequestMsg(request_id=r.id, from_admin=adm, body=body)); r.updated = datetime.utcnow(); db.commit()
+        if adm: mail(r.user.email, f"New message about: {r.title}", f'<p>{_html.escape(body)}</p><p><a href="{BASE}/request/{r.id}">Open the conversation</a></p>')
+        else: tell_admin(r, "new message")
+    return go(f"/request/{rid}")
+@app.post("/request/{rid}/respond")
+def request_respond(rid: int, request: Request, db=Depends(get_db), _=Depends(csrf), action: str = Form()):
+    u, r = req_for(request, db, rid)
+    ok = u.id == r.user_id and ((r.status == "quoted" and action in ("accept", "decline")) or (r.status in ("new", "reviewing", "quoted") and action == "cancel"))
+    if not ok: raise HTTPEx(400, "Nothing to respond to.")
+    r.status = {"accept": "accepted", "decline": "declined", "cancel": "cancelled"}[action]; r.updated = datetime.utcnow(); db.commit(); tell_admin(r, STATUS[r.status].lower())
+    flash(request, "Thanks, I've noted that."); return go(f"/request/{rid}")
+@app.post("/admin/request/{rid}")
+def admin_request(rid: int, request: Request, db=Depends(get_db), _=Depends(csrf), status: str = Form(), quote_usd: float = Form(0), pay_link: str = Form(""), admin_note: str = Form("")):
+    adm = need(request, db, "admin"); r = db.get(CustomRequest, rid)
+    if not r: raise HTTPEx(404)
+    if status not in STATUS: raise HTTPEx(400, "Unknown status.")
+    pay_link = pay_link.strip()[:500]
+    if pay_link and not pay_link.startswith("https://"): flash(request, "Payment links must start with https://"); return go(f"/request/{rid}")
+    cents = max(0, round(quote_usd * 100)); changed = status != r.status or cents != r.quote_cents
+    r.status, r.quote_cents, r.pay_link, r.admin_note, r.updated = status, cents, pay_link, admin_note[:3000], datetime.utcnow()
+    audit(db, adm, f"Request {r.id} ({r.title[:40]}): {status}" + (f", quote {fmt(cents)}" if cents else "")); db.commit()
+    if changed: mail(r.user.email, f"Update on your request: {r.title}", f"<p>Status: <b>{STATUS[status]}</b>.</p>" + (f"<p>Quote: <b>{fmt(cents)}</b>.</p>" if cents else "") + f'<p><a href="{BASE}/request/{r.id}">See details and reply</a></p>')
+    flash(request, "Saved." + (" The customer was emailed." if changed else "")); return go(f"/request/{rid}")
+
 # ---------- password reset ----------
 rser = URLSafeTimedSerializer(SECRET, salt="reset")
 def reset_user(token, db):  # token embeds the tail of the current hash, so it dies the moment the password changes (single use)
@@ -599,10 +682,10 @@ def img(name: str, db=Depends(get_db)):
 @app.get("/robots.txt")
 def robots():
     ai = "\n".join(f"User-agent: {b}\nAllow: /\n" for b in ("GPTBot", "ClaudeBot", "PerplexityBot", "Google-Extended", "CCBot"))
-    return PlainTextResponse(f"User-agent: *\nAllow: /\nDisallow: /admin\nDisallow: /studio\nDisallow: /account\nDisallow: /buy\nDisallow: /download\n\n{ai}\nSitemap: {BASE}/sitemap.xml\n")
+    return PlainTextResponse(f"User-agent: *\nAllow: /\nDisallow: /admin\nDisallow: /studio\nDisallow: /account\nDisallow: /buy\nDisallow: /request/\nDisallow: /download\n\n{ai}\nSitemap: {BASE}/sitemap.xml\n")
 @app.get("/sitemap.xml")
 def sitemap(db=Depends(get_db)):
-    urls = ["/", "/products"] + [f"/pages/{p.slug}" for p in db.scalars(select(Page))] + [f"/p/{p.slug}" for p in db.scalars(select(Product).where(Product.status == "live"))]
+    urls = ["/", "/products", "/request"] + [f"/pages/{p.slug}" for p in db.scalars(select(Page))] + [f"/p/{p.slug}" for p in db.scalars(select(Product).where(Product.status == "live"))]
     return Response('<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">' + "".join(f"<url><loc>{BASE}{u}</loc></url>" for u in urls) + "</urlset>", media_type="application/xml")
 @app.get("/llms.txt")
 def llms(db=Depends(get_db)):
