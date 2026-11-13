@@ -19,7 +19,7 @@ def login(role="buyer", **kw):
     uid, email = user(role, **kw); c = C(); assert c.form("/login", email=email, password="longpassword1").status_code == 303; c.uid = uid; c.email = email; return c
 def product(owner=None, status="live", **kw):
     with m.Session(m.engine) as db:
-        k = next(_n); p = m.Product(slug=f"p{k}", title=f"Prod {k}", summary="s", body="<p>b</p>", price_cents=2900, status=status, owner_id=owner, link="https://example.com/dl", **{"pay_link": "https://pay.example.com/req/1", **kw}); db.add(p); db.commit(); return p.id, p.slug
+        k = next(_n); p = m.Product(slug=f"p{k}", title=f"Prod {k}", summary="s", body="<p>b</p>", status=status, owner_id=owner, link="https://example.com/dl", **{"price_cents": 2900, "pay_link": "https://pay.example.com/req/1", **kw}); db.add(p); db.commit(); return p.id, p.slug
 def order(uid, pid, provider="payoneer", status="pending"):
     with m.Session(m.engine) as db:
         o = m.Order(code=f"O{next(_n):05d}", user_id=uid, product_id=pid, provider=provider, status=status, amount_cents=2900); db.add(o); db.commit(); return o.code

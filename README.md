@@ -4,7 +4,7 @@
     python -m venv .venv && source .venv/bin/activate
     pip install -r requirements.txt
     ADMIN_EMAIL=you@example.com uvicorn app.main:app --reload
-Open http://localhost:8000 and register with ADMIN_EMAIL to become admin. With no RESEND_API_KEY the confirmation link prints in the terminal.
+Open http://localhost:8000 and register with ADMIN_EMAIL to become admin. With no BREVO_API_KEY the confirmation link prints in the terminal.
 Tests: `pip install -r requirements-dev.txt && pytest`
 
 ## How payment works (no payment provider integration, so no webhooks to break)
@@ -14,6 +14,9 @@ Tests: `pip install -r requirements-dev.txt && pytest`
 4. Bangladesh buyers also see *Pay with bKash or Nagad* (set the number in Site content). Same flow, and you confirm by hand.
 Only the admin can set payment links, so a seller can never redirect money to themselves. Monthly products grant 31 days per confirmation: use *Renew +1 month* each cycle (expiring ones are listed in Admin).
 When you run an offer, a Payoneer link has a fixed amount, so give each product an offer link at the discounted price, or buyers will pay the old amount. The order page always shows the amount due; confirm it matches before marking paid.
+
+## Free products
+Set a product's price to 0 and it becomes free for anyone with a verified account: the button reads "Get it free", there is no payment link, no order to approve and no license key, and it goes straight into the buyer's library. Visitors without an account are sent to register. Free products never lapse, even if set to monthly, and they don't count toward revenue or seller payouts. (A product sold on its own website with price 0 is not free here: it simply hides the price.)
 
 ## Products sold on their own website
 In Studio, an admin can set **"Sold on its own website"** on any product. The product keeps its page here (description, cover, SEO, structured data), but the button becomes "Buy on theirsite.com" and sends the buyer straight there. Nothing is charged here, no order is created, and our offers and Payoneer/bKash options are hidden for it. Leave the price at 0 to hide the price. Only the admin can set this, so a seller can't send buyers (and their money) off-site. Sales on those sites don't appear in Admin or in seller payouts.
@@ -27,7 +30,7 @@ In Studio, an admin can set **"Sold on its own website"** on any product. The pr
 Existing databases get new columns and lose the old Lemon Squeezy columns automatically at startup (old SQLite files: delete the .db and start fresh).
 
 ## Other settings
-- Email: RESEND_API_KEY and MAIL_FROM (needs a verified domain). Receipts, claim alerts, payout notices, resend-verification.
+- Email (Brevo): create an API key (Settings > SMTP & API), verify your sender address or domain in Brevo, then set BREVO_API_KEY and MAIL_FROM="Your Store <you@yourdomain.com>". Without a verified sender Brevo rejects the mail. The free plan has a daily send limit, so check its current size. Receipts, claim alerts, payout notices, resend-verification.
 - Google login: OAuth Web client, redirect URI BASE_URL/auth/google/callback, set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET (move the consent screen to production).
 - Sellers: admin promotes users in Admin > Users and roles. Seller edits go back to "pending". Admin > Seller payouts tracks what each seller is owed (share % in Site content); you pay them yourself and record it.
 - Backups: .github/workflows/backup.yml dumps Postgres daily (private repo only; secret DATABASE_URL, use Neon's direct connection string).

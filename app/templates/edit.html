@@ -5,7 +5,7 @@
 <label>One-line summary<input name="summary" maxlength="300" value="{{ p.summary if p }}"></label>
 <label>Description (basic HTML allowed)<textarea name="body">{{ p.body if p }}</textarea></label>
 <label>Type (Source code, Automation, Subscription...)<input name="kind" maxlength="40" value="{{ p.kind if p else 'Download' }}"></label>
-<label>Price in USD<input name="price_usd" type="number" step="0.01" min="0" value="{{ '%.2f'|format(p.price_cents/100) if p else '19.00' }}"></label>
+<label>Price in USD (0 makes it free for anyone with an account)<input name="price_usd" type="number" step="0.01" min="0" value="{{ '%.2f'|format(p.price_cents/100) if p else '19.00' }}"></label>
 <label>Billing<select name="per"><option value="">One-time</option><option value="month" {{ 'selected' if p and p.per }}>Monthly</option></select></label>
 {% if u.role == 'admin' %}<label>Sold on its own website? Paste its https address. Buyers are sent there and nothing is charged here<input name="external_url" value="{{ p.external_url if p }}" placeholder="https://"></label>
 <label>Payoneer payment link (its amount must equal the price)<input name="pay_link" value="{{ p.pay_link if p }}" placeholder="https://"></label>

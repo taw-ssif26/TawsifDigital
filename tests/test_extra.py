@@ -72,3 +72,31 @@ def test_external_product_sends_buyers_to_its_own_site():
         assert db.scalar(m.select(m.Product.id).where(m.Product.title == "Ext2")) is None  # non-https rejected
     a.files("/studio/edit", {}, **{**f, "title": "Ext3"}); page = C().get("/p/" + [x for x in re.findall(r'/p/(ext3[^"]*)', C().get("/products").text)][0]).text
     assert "https://other.example.com" in page and "$0" not in page
+
+def test_free_product_goes_straight_to_library():
+    pid, slug = product(price_cents=0, pay_link="", per="month"); b = login("buyer", country="Germany")
+    anon = C().get(f"/p/{slug}").text; assert "Create a free account" in anon and "Free" in anon and "/get/" not in anon and "Payoneer" not in anon
+    h = b.get(f"/p/{slug}").text; assert "Get it free" in h and "Pay with Payoneer" not in h
+    assert b.form(f"/buy/{pid}", provider="payoneer").status_code == 400 and C().form(f"/get/{pid}").headers["location"] == "/login"
+    for _ in range(2): assert b.form(f"/get/{pid}").headers["location"] == "/account"  # twice: still one order
+    with m.Session(m.engine) as db: orders = db.scalars(m.select(m.Order).where(m.Order.user_id == b.uid, m.Order.product_id == pid)).all()
+    assert len(orders) == 1 and orders[0].status == "paid" and orders[0].amount_cents == 0 and orders[0].provider == "free" and orders[0].license == ""
+    assert b.get(f"/download/{orders[0].code}").headers["location"] == "https://example.com/dl" and "Free" in b.get("/account").text  # monthly flag ignored for free items
+    assert payments(orders[0].code) == 0 and "In your library" in b.get(f"/p/{slug}").text
+    ext, _ = product(price_cents=0, external_url="https://x.example.com", pay_link=""); pend, _ = product(price_cents=0, status="pending")
+    assert b.form(f"/get/{ext}").status_code == 404 and b.form(f"/get/{pend}").status_code == 404  # external or unapproved items can't be claimed
+
+def test_mail_goes_through_brevo(monkeypatch):
+    calls = []; monkeypatch.setenv("BREVO_API_KEY", "k1"); monkeypatch.setenv("MAIL_FROM", "Shop <hi@x.com>")
+    class R: status_code = 201; text = ""
+    class H:
+        @staticmethod
+        def post(url, **k): calls.append((url, k)); return R()
+    monkeypatch.setattr(m, "httpx", H); m.mail("a@b.com", "Subj", "<p>x</p>")
+    url, k = calls[0]; assert url == "https://api.brevo.com/v3/smtp/email" and k["headers"]["api-key"] == "k1"
+    assert k["json"] == {"sender": {"name": "Shop", "email": "hi@x.com"}, "to": [{"email": "a@b.com"}], "subject": "Subj", "htmlContent": "<p>x</p>"}
+    class Boom:
+        @staticmethod
+        def post(*a, **k): raise RuntimeError("down")
+    monkeypatch.setattr(m, "httpx", Boom); m.mail("a@b.com", "S", "b")  # an outage must not raise
+    monkeypatch.setenv("MAIL_FROM", ""); m.mail("a@b.com", "S", "b")

@@ -1,5 +1,5 @@
 {% extends "base.html" %}{% block title %}{{ 'Create account' if mode=='register' else 'Sign in' }} | {{ S.site_name }}{% endblock %}{% block robots %}<meta name="robots" content="noindex">{% endblock %}
-{% block body %}<div class="auth"><div class="ap cover c3" data-m="{{ S.site_name[:1] }}"><h2>{{ S.hero_title }}</h2><p>{{ S.hero_sub }}</p></div>
+{% block body %}<div class="auth"><div class="ap" data-m="{{ S.site_name[:1] }}"><h2>{{ S.hero_title }}</h2><p>{{ S.hero_sub }}</p></div>
 <div class="af"><p class="eyebrow">{{ 'Join' if mode=='register' else 'Welcome back' }}</p><h1 style="font-size:clamp(34px,4.4vw,56px);margin-bottom:26px">{{ 'Create account' if mode=='register' else 'Sign in' }}</h1>
 <form method="post" class="st" autocomplete="on"><input type="hidden" name="csrf_token" value="{{ csrf }}">
 {% if mode=='register' %}<label>Name<input name="name" required maxlength="120" autocomplete="name"></label>{% endif %}

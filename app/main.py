@@ -1,5 +1,6 @@
 import os, hmac, hashlib, json, secrets, time, re, uuid, base64, struct
 import html as _html
+from email.utils import parseaddr
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 import io
@@ -144,7 +145,7 @@ PAGES = {"about": ("About", "<p>Tell your story here. Edit this page from the ad
  "contact": ("Contact", "<p>How to reach you.</p>"),
  "terms": ("Terms", "<p>By buying you receive a personal licence to use what you purchased. Do not resell, share or redistribute files, keys or source code unless the product page says you can.</p><p>Products are delivered to your account once payment is confirmed. Subscriptions renew until you cancel, and you keep access until the period you paid for ends. Products are provided as described, without a guarantee of uninterrupted service.</p><p><i>Starter text, not legal advice. Replace it with your own terms before launch.</i></p>"),
  "refunds": ("Refunds", "<p>Because digital products can be copied the moment they are delivered, sales are generally final. If a product does not work as described, contact me within 7 days of purchase and I will fix it or refund you.</p><p><i>Starter text. Edit it to match your policy.</i></p>"),
- "privacy": ("Privacy", "<p>I store your name, email, country and purchase history so I can deliver what you bought. Payments are made through Payoneer payment links and I never see your card details. Emails are sent through Resend. If you sign in with Google I receive your name and verified email address only.</p><p>I do not sell your data. To see or delete your data, contact me.</p><p><i>Starter text, not legal advice. Review before launch.</i></p>")}
+ "privacy": ("Privacy", "<p>I store your name, email, country and purchase history so I can deliver what you bought. Payments are made through Payoneer payment links and I never see your card details. Emails are sent through Brevo. If you sign in with Google I receive your name and verified email address only.</p><p>I do not sell your data. To see or delete your data, contact me.</p><p><i>Starter text, not legal advice. Review before launch.</i></p>")}
 
 ADDS = {"products": {"image": "VARCHAR(80) DEFAULT ''", "pay_link": "VARCHAR(500) DEFAULT ''", "offer_link": "VARCHAR(500) DEFAULT ''", "external_url": "VARCHAR(500) DEFAULT ''"}, "orders": {"paid_until": "TIMESTAMP", "note": "VARCHAR(200) DEFAULT ''", "claimed": "BOOLEAN DEFAULT FALSE"},
         "users": {"wants_seller": "BOOLEAN DEFAULT FALSE", "totp": "VARCHAR(32) DEFAULT ''", "totp_last": "BIGINT DEFAULT 0"}}
@@ -232,10 +233,16 @@ def render(request, db, name, status=200, **ctx):
     ctx.update(request=request, S=S, u=me(request, db), csrf=request.session["csrf"], flash=request.session.pop("flash", None), base=BASE,
                fmt=fmt, show=lambda p: price(p, S), access=has_access, google=bool(G_ID), pages=db.scalars(select(Page)).all())
     return T.TemplateResponse(request, name, ctx, status_code=status)
-def mail(to, subject, html):
-    if not E("RESEND_API_KEY"): print(f"[mail] {to} | {subject}\n{html}"); return
-    try: httpx.post("https://api.resend.com/emails", headers={"Authorization": "Bearer " + E("RESEND_API_KEY")}, timeout=10, json={"from": E("MAIL_FROM", "onboarding@resend.dev"), "to": [to], "subject": subject, "html": html})
-    except Exception as e: print("[mail failed]", e)  # never let a mail outage break a webhook or a checkout
+def mail(to, subject, html):  # Brevo transactional API; without a key the message is printed to the console
+    key = E("BREVO_API_KEY")
+    if not key: print(f"[mail] {to} | {subject}\n{html}"); return
+    name, addr = parseaddr(E("MAIL_FROM", ""))
+    if not addr: print("[mail skipped] set MAIL_FROM to a sender you verified in Brevo"); return
+    try:
+        r = httpx.post("https://api.brevo.com/v3/smtp/email", headers={"api-key": key, "accept": "application/json"}, timeout=10,
+                       json={"sender": {"name": name, "email": addr} if name else {"email": addr}, "to": [{"email": to}], "subject": subject, "htmlContent": html})
+        if r.status_code >= 300: print("[mail failed]", r.status_code, r.text[:200])
+    except Exception as e: print("[mail failed]", e)  # never let a mail outage break a checkout or a login
 def send_verify(u): mail(u.email, "Confirm your email", f'<p>Confirm your account: <a href="{BASE}/verify/{ser.dumps(u.id)}">verify email</a>. The link lasts 24 hours.</p>')
 def notify_paid(o):
     t = _html.escape(o.product.title)
@@ -265,8 +272,9 @@ def fulfil(o):
 
 def has_access(o):
     if o.status != "paid": return False
-    if o.product.per: return bool(o.paid_until) and o.paid_until > datetime.utcnow()  # monthly products lapse unless renewed
+    if o.product.per and o.amount_cents > 0: return bool(o.paid_until) and o.paid_until > datetime.utcnow()  # monthly products lapse unless renewed
     return True
+def is_free(p): return not p.external_url and p.price_cents == 0
 def pay_url(p, S):
     if S["offer_on"] == "1" and p.offer_link: return p.offer_link
     return p.pay_link or S["pay_default"]
@@ -358,6 +366,7 @@ def buy(pid: int, request: Request, db=Depends(get_db), _=Depends(csrf), provide
     u = need(request, db); limit(request, "buy", 15); p = db.get(Product, pid); S = settings(db)
     if not p or p.status != "live": raise HTTPEx(404)
     if p.external_url: raise HTTPEx(400, "This product is sold on its own website.")
+    if is_free(p): raise HTTPEx(400, "This product is free. Use the Get it free button.")
     if provider not in ("payoneer", "manual"): raise HTTPEx(400, "Unknown payment method.")
     if provider == "manual" and u.country != "Bangladesh": raise HTTPEx(403, "Manual payment is only for buyers in Bangladesh.")
     if provider == "payoneer" and not pay_url(p, S): raise HTTPEx(503, "Payment isn't set up for this product yet. Please contact me.")
@@ -373,6 +382,13 @@ def claim(code: str, request: Request, db=Depends(get_db), _=Depends(csrf), note
     o.claimed, o.note = True, note.strip()[:200]; db.commit()
     if E("ADMIN_EMAIL"): mail(E("ADMIN_EMAIL"), "Payment to confirm", f"<p>{_html.escape(u.email)} says they paid for <b>{_html.escape(o.product.title)}</b> ({fmt(o.amount_cents)}, order {o.code}, via {o.provider}). Reference: {_html.escape(o.note) or 'none'}. Confirm in Admin &gt; Orders.</p>")
     flash(request, "Thanks! I'll check and unlock your product as soon as the payment shows up."); return go(f"/order/{o.code}")
+@app.post("/get/{pid}")
+def get_free(pid: int, request: Request, db=Depends(get_db), _=Depends(csrf)):
+    u = need(request, db); limit(request, "free", 30); p = db.get(Product, pid)  # free products go straight to the library of any signed-in, verified member
+    if not p or p.status != "live" or not is_free(p): raise HTTPEx(404)
+    if not db.scalar(select(Order.id).where(Order.user_id == u.id, Order.product_id == p.id, Order.status == "paid", Order.amount_cents == 0)):
+        db.add(Order(code=secrets.token_hex(4).upper(), user_id=u.id, product_id=p.id, provider="free", status="paid", amount_cents=0)); db.commit()
+    flash(request, f"{p.title} is now in your library."); return go("/account")
 @app.get("/order/{code}")
 def order(code: str, request: Request, db=Depends(get_db)):
     u = need(request, db); o = db.scalar(select(Order).where(Order.code == code, Order.user_id == u.id))
@@ -407,7 +423,7 @@ def studio_save(request: Request, db=Depends(get_db), _=Depends(csrf), id: int =
     u = need(request, db, "seller", "admin"); p = db.get(Product, id) if id else Product(owner_id=u.id, slug="")
     if id and (not p or (u.role == "seller" and p.owner_id != u.id)): raise HTTPEx(404)
     p.title, p.summary, p.body, p.kind = title.strip()[:160], summary.strip()[:300], clean(body), kind.strip()[:40]
-    p.price_cents, p.per = max(0, round(price_usd * 100)), ("month" if per == "month" else "")
+    p.price_cents = max(0, round(price_usd * 100)); p.per = "month" if per == "month" and p.price_cents else ""
     if link and not link.startswith("https://"): flash(request, "Product links must start with https://"); return go(f"/studio/edit?id={id}")
     p.link = link.strip()[:500]
     if u.role == "admin":  # only the admin may set where customers pay; a seller can never redirect money
@@ -591,4 +607,4 @@ def sitemap(db=Depends(get_db)):
 @app.get("/llms.txt")
 def llms(db=Depends(get_db)):
     S = settings(db); ps = db.scalars(select(Product).where(Product.status == "live")).all()
-    return PlainTextResponse(f"# {S['site_name']}\n\n> {S['seo_desc']}\n\n## Products\n" + "\n".join(f"- [{p.title}]({BASE}/p/{p.slug}): {p.summary} ({(fmt(price(p, S)[0]) + ('/' + p.per if p.per else '') + ', ') if price(p, S)[0] else ''}{p.kind}{', sold on its own website' if p.external_url else ''})" for p in ps) + "\n")
+    return PlainTextResponse(f"# {S['site_name']}\n\n> {S['seo_desc']}\n\n## Products\n" + "\n".join(f"- [{p.title}]({BASE}/p/{p.slug}): {p.summary} ({(fmt(price(p, S)[0]) + ('/' + p.per if p.per else '') + ', ') if price(p, S)[0] else ('free, ' if not p.external_url else '')}{p.kind}{', sold on its own website' if p.external_url else ''})" for p in ps) + "\n")
