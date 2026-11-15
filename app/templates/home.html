@@ -1,8 +1,9 @@
-{% extends "base.html" %}{% from "_m.html" import card, cover, price with context %}
-{% block ld %}<script type="application/ld+json">{{ {"@context":"https://schema.org","@type":"Organization","name":S.site_name,"url":base,"description":S.seo_desc}|tojson }}</script>{% endblock %}
+{% extends "base.html" %}{% from "_m.html" import card, cover, price, stars, review_list with context %}
+{% block ld %}<script type="application/ld+json">{{ {"@context":"https://schema.org","@type":"Organization","name":S.site_name,"url":base,"description":S.seo_desc}|tojson }}</script>
+<script type="application/ld+json">{{ {"@context":"https://schema.org","@type":"WebSite","name":S.site_name,"url":base,"potentialAction":{"@type":"SearchAction","target":base~"/search?q={search_term_string}","query-input":"required name=search_term_string"}}|tojson }}</script>{% endblock %}
 {% block body %}
 <section class="hero"><div class="aur" data-par=".08"></div>
-<div><p class="eyebrow" data-r>{{ S.site_name }}</p><h1 data-scramble="{{ S.hero_title }}">{{ S.hero_title }}</h1><p class="lead" data-r>{{ S.hero_sub }}</p><div class="cta" data-r><a class="btn" href="/products">{{ S.cta_text }}</a><a class="btn o" href="/pages/about">About</a></div></div>
+<div><p class="eyebrow" data-r>{{ S.site_name }}</p><h1 data-scramble="{{ S.hero_title }}">{{ S.hero_title }}</h1><p class="lead" data-r>{{ S.hero_sub }}</p><div class="cta" data-r><a class="btn" href="/products">{{ S.cta_text }}</a><a class="btn o" href="/pages/about">About</a></div>{% if pl_count %}<a class="proof" href="/reviews" data-r>{{ stars(pl_avg) }}<span>{{ '%.1f'|format(pl_avg) }} from {{ pl_count }} review{{ 's' if pl_count != 1 }}</span></a>{% endif %}</div>
 <div class="stage" data-par="-.03">{% if products %}{% set f = products[0] %}<a class="pcard feat" href="/p/{{ f.slug }}">{{ cover(f) }}<div class="pb"><h3>{{ f.title }}</h3><div class="pf"><span class="pr">{{ price(f) }}</span><span class="go">View →</span></div></div></a>{% else %}<div class="pcard feat"><div class="cover c0" data-m="{{ S.site_name[:1] }}"></div><div class="pb"><h3>Your first product</h3></div></div>{% endif %}
 <span class="fl f1">Unlocked after payment</span><span class="fl f2">Yours to keep</span></div></section>
 <div class="tb" data-r>{% for t in S.trust_bar.split('|') %}<span>{{ t.strip() }}</span>{% endfor %}</div>
@@ -10,5 +11,6 @@
 <section><div class="sh"><h2 data-r>The catalog</h2><a class="btn o s" href="/products">See everything</a></div>
 <div class="grid">{% set rest = products[1:] if products|length > 1 else products %}{% for p in rest %}{{ card(p) }}{% else %}<p class="mute">Products appear here once they're published.</p>{% endfor %}</div></section>
 <section class="band"><div class="in"><h2 data-r>{{ S.how_title }}</h2><div class="steps">{% for i in (1,2,3) %}<div class="step" data-r><b>0{{ i }}</b><h3>{{ S['t%d_h'|format(i)] }}</h3><p>{{ S['t%d_p'|format(i)] }}</p></div>{% endfor %}</div></div></section>
+{% if pl_count %}<section class="sec" style="padding-top:0"><div class="sh"><h2 data-r>What people say</h2><a class="btn o s" href="/reviews">All {{ pl_count }} review{{ 's' if pl_count != 1 }}</a></div><div class="grid rgrid">{{ review_list(pl_reviews) }}</div></section>{% endif %}
 <section class="cta2"><h2 data-r>{{ S.cta_title }}</h2><p data-r>{{ S.cta_sub }}</p><div class="cta" style="justify-content:center" data-r><a class="btn" href="/products">{{ S.cta_text }}</a><a class="btn o" href="/request">Request custom work</a></div></section>
 {% endblock %}

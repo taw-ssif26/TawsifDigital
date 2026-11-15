@@ -17,14 +17,14 @@ def test_seller_payouts_and_refund_clawback():
     with m.Session(m.engine) as db: assert m.balance(db, sid, 80)["due"] == -3000
 
 def test_emails_sent_once(monkeypatch):
-    sent = []; monkeypatch.setattr(m, "mail", lambda to, sub, body: sent.append((to, sub, body)))
+    sent = []; monkeypatch.setattr(m, "mail", lambda to, sub, body, att=None: sent.append((to, sub, body)))
     b, a = login("buyer"), login("admin"); pid, _ = product(); code = order(b.uid, pid); oid = get_order(code).id
     for _ in range(2): a.form(f"/admin/order/{oid}", action="paid")
     paid = [x for x in sent if x[0] == b.email]; assert len(paid) == 1 and get_order(code).license in paid[0][2]
     b.form(f"/order/{code}/claim"); assert b.form(f"/order/{get_order(order(b.uid, pid)).code}/claim").status_code == 303 and any("Payment to confirm" in x[1] for x in sent)
 
 def test_resend_verification(monkeypatch):
-    sent = []; monkeypatch.setattr(m, "mail", lambda to, sub, body: sent.append((to, body)))
+    sent = []; monkeypatch.setattr(m, "mail", lambda to, sub, body, att=None: sent.append((to, body)))
     _, pending = user(verified=False); _, ok = user(); c = C()
     for e in (pending, ok, "ghost@t.com"): assert c.form("/resend", email=e).headers["location"] == "/login"
     assert [x[0] for x in sent] == [pending] and "/verify/" in sent[0][1]

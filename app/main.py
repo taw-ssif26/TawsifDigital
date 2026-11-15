@@ -1,5 +1,7 @@
 import os, hmac, hashlib, json, secrets, time, re, uuid, base64, struct
 import html as _html
+import difflib
+from xml.sax.saxutils import escape as xesc
 from email.utils import parseaddr
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
@@ -63,6 +65,8 @@ class Product(Base):
     per: Mapped[str] = mapped_column(String(10), default="")  # "" one-time, or "month"
     pay_link: Mapped[str] = mapped_column(String(500), default="")  # Payoneer payment link, admin only (money must reach the admin)
     external_url: Mapped[str] = mapped_column(String(500), default="")  # product sold on its own website: buyers are sent there (admin only)
+    rating_avg: Mapped[float] = mapped_column(default=0.0)  # cached from approved reviews
+    rating_count: Mapped[int] = mapped_column(default=0)
     offer_link: Mapped[str] = mapped_column(String(500), default="")  # Payoneer link for the discounted price while an offer runs
     file_name: Mapped[str] = mapped_column(String(255), default="")
     link: Mapped[str] = mapped_column(String(500), default="")
@@ -87,13 +91,15 @@ class Order(Base):
     created: Mapped[datetime] = mapped_column(default=datetime.utcnow)
     user: Mapped["User"] = relationship()
     product: Mapped["Product"] = relationship()
-class Payment(Base):  # one row per money-in event: first payment, each renewal, manual confirmation. Seller payouts are computed from this.
+class Payment(Base):  # one row per money-in event: first payment, each renewal, manual confirmation. Each gets its own invoice number.
     __tablename__ = "payments"
     id: Mapped[int] = mapped_column(primary_key=True)
     order_id: Mapped[int] = mapped_column(ForeignKey("orders.id"), index=True)
     ref: Mapped[str] = mapped_column(String(60), unique=True)
     amount_cents: Mapped[int] = mapped_column(default=0)
+    inv_no: Mapped[int | None] = mapped_column(nullable=True, unique=True)
     created: Mapped[datetime] = mapped_column(default=datetime.utcnow)
+    order: Mapped["Order"] = relationship()
 class Payout(Base):
     __tablename__ = "payouts"
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -137,6 +143,20 @@ class RequestMsg(Base):
     from_admin: Mapped[bool] = mapped_column(default=False)
     body: Mapped[str] = mapped_column(Text)
     created: Mapped[datetime] = mapped_column(default=datetime.utcnow)
+class Review(Base):  # product reviews (verified buyers only) and platform reviews (product_id is NULL); shown publicly only once approved
+    __tablename__ = "reviews"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    product_id: Mapped[int | None] = mapped_column(ForeignKey("products.id"), nullable=True, index=True)
+    rating: Mapped[int] = mapped_column(default=5)
+    title: Mapped[str] = mapped_column(String(120), default="")
+    body: Mapped[str] = mapped_column(Text, default="")
+    status: Mapped[str] = mapped_column(String(10), default="pending")  # pending | approved | rejected
+    reply: Mapped[str] = mapped_column(Text, default="")  # public reply from the owner
+    created: Mapped[datetime] = mapped_column(default=datetime.utcnow)
+    updated: Mapped[datetime] = mapped_column(default=datetime.utcnow)
+    user: Mapped["User"] = relationship()
+    product: Mapped["Product"] = relationship()
 class Setting(Base):
     __tablename__ = "settings"
     key: Mapped[str] = mapped_column(String(60), primary_key=True)
@@ -166,6 +186,9 @@ DEF = {
  "request_open": ("Accepting custom requests (1 = yes, 0 = no)", "1"),
  "request_title": ("Custom work page headline", "Need something built for you?"),
  "request_intro": ("Custom work page intro", "Tell me what you need: a system, an app, an automation. I'll review it, reply with questions or a quote, and build it once you agree."),
+ "biz_name": ("Business name on invoices", "Tawsif Digital"), "biz_address": ("Business address on invoices (one line per row)", ""),
+ "biz_email": ("Business email on invoices", ""), "biz_tax": ("Tax or registration number on invoices (optional)", ""),
+ "invoice_note": ("Invoice footer note", "Thank you for your purchase. Questions about this invoice? Just reply to the email it came with."),
  "seller_share": ("Seller share of each sale, percent (used for payouts)", "80"),
  "seo_desc": ("Default meta description", "Source code, n8n automations, templates and software subscriptions with instant delivery."),
  "footer": ("Footer line", "Built and supported by Tawsif."),
@@ -176,8 +199,8 @@ PAGES = {"about": ("About", "<p>Tell your story here. Edit this page from the ad
  "refunds": ("Refunds", "<p>Because digital products can be copied the moment they are delivered, sales are generally final. If a product does not work as described, contact me within 7 days of purchase and I will fix it or refund you.</p><p><i>Starter text. Edit it to match your policy.</i></p>"),
  "privacy": ("Privacy", "<p>I store your name, email, country and purchase history so I can deliver what you bought. Payments are made through Payoneer payment links and I never see your card details. Emails are sent through Brevo. If you sign in with Google I receive your name and verified email address only.</p><p>I do not sell your data. To see or delete your data, contact me.</p><p><i>Starter text, not legal advice. Review before launch.</i></p>")}
 
-ADDS = {"products": {"image": "VARCHAR(80) DEFAULT ''", "pay_link": "VARCHAR(500) DEFAULT ''", "offer_link": "VARCHAR(500) DEFAULT ''", "external_url": "VARCHAR(500) DEFAULT ''"}, "orders": {"paid_until": "TIMESTAMP", "note": "VARCHAR(200) DEFAULT ''", "claimed": "BOOLEAN DEFAULT FALSE"},
-        "users": {"wants_seller": "BOOLEAN DEFAULT FALSE", "totp": "VARCHAR(32) DEFAULT ''", "totp_last": "BIGINT DEFAULT 0"}}
+ADDS = {"products": {"image": "VARCHAR(80) DEFAULT ''", "pay_link": "VARCHAR(500) DEFAULT ''", "offer_link": "VARCHAR(500) DEFAULT ''", "external_url": "VARCHAR(500) DEFAULT ''", "rating_avg": "DOUBLE PRECISION DEFAULT 0", "rating_count": "INTEGER DEFAULT 0"}, "orders": {"paid_until": "TIMESTAMP", "note": "VARCHAR(200) DEFAULT ''", "claimed": "BOOLEAN DEFAULT FALSE"},
+        "users": {"wants_seller": "BOOLEAN DEFAULT FALSE", "totp": "VARCHAR(32) DEFAULT ''", "totp_last": "BIGINT DEFAULT 0"}, "payments": {"inv_no": "INTEGER"}}
 LEGACY = {"products": ["ls_variant"], "orders": ["ls_order_id", "ls_sub_id", "sub_status", "renews_at", "ends_at", "portal_url"]}  # from the removed Lemon Squeezy integration
 def migrate():  # adds new columns and drops the old Lemon Squeezy ones on databases created earlier
     insp = inspect(engine)
@@ -193,6 +216,7 @@ def migrate():  # adds new columns and drops the old Lemon Squeezy ones on datab
                 try:
                     with engine.begin() as c: c.execute(text(f"ALTER TABLE {t} DROP COLUMN {n}"))
                 except Exception as e: print(f"[migrate] could not drop {t}.{n}: {e}")  # old SQLite files: delete the .db and start fresh
+    with engine.begin() as c: c.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_payments_inv_no ON payments (inv_no)"))
 
 def init():
     Base.metadata.create_all(engine); migrate()
@@ -260,22 +284,60 @@ def render(request, db, name, status=200, **ctx):
     S = settings(db)
     request.session.setdefault("csrf", secrets.token_urlsafe(24))
     ctx.update(request=request, S=S, u=me(request, db), csrf=request.session["csrf"], flash=request.session.pop("flash", None), base=BASE,
-               fmt=fmt, show=lambda p: price(p, S), access=has_access, rstatus=STATUS, google=bool(G_ID), pages=db.scalars(select(Page)).all())
+               fmt=fmt, show=lambda p: price(p, S), access=has_access, rstatus=STATUS, rname=rname, inv_label=inv_label, google=bool(G_ID), pages=db.scalars(select(Page)).all())
     return T.TemplateResponse(request, name, ctx, status_code=status)
-def mail(to, subject, html):  # Brevo transactional API; without a key the message is printed to the console
+def mail(to, subject, html, attachments=None):  # Brevo transactional API; without a key the message is printed to the console
     key = E("BREVO_API_KEY")
-    if not key: print(f"[mail] {to} | {subject}\n{html}"); return
+    if not key: print(f"[mail] {to} | {subject} | attachments: {[a[0] for a in attachments or []]}\n{html}"); return
     name, addr = parseaddr(E("MAIL_FROM", ""))
     if not addr: print("[mail skipped] set MAIL_FROM to a sender you verified in Brevo"); return
+    body = {"sender": {"name": name, "email": addr} if name else {"email": addr}, "to": [{"email": to}], "subject": subject, "htmlContent": html}
+    if attachments: body["attachment"] = [{"name": n, "content": base64.b64encode(b).decode()} for n, b in attachments]
     try:
-        r = httpx.post("https://api.brevo.com/v3/smtp/email", headers={"api-key": key, "accept": "application/json"}, timeout=10,
-                       json={"sender": {"name": name, "email": addr} if name else {"email": addr}, "to": [{"email": to}], "subject": subject, "htmlContent": html})
+        r = httpx.post("https://api.brevo.com/v3/smtp/email", headers={"api-key": key, "accept": "application/json"}, timeout=15, json=body)
         if r.status_code >= 300: print("[mail failed]", r.status_code, r.text[:200])
     except Exception as e: print("[mail failed]", e)  # never let a mail outage break a checkout or a login
 def send_verify(u): mail(u.email, "Confirm your email", f'<p>Confirm your account: <a href="{BASE}/verify/{ser.dumps(u.id)}">verify email</a>. The link lasts 24 hours.</p>')
-def notify_paid(o):
-    t = _html.escape(o.product.title)
-    mail(o.user.email, f"Your purchase: {o.product.title}", f'<p>Thank you! <b>{t}</b> is ready in your library: <a href="{BASE}/account">open library</a>.</p>' + (f"<p>License key: <b>{o.license}</b></p>" if o.license else "") + (f"<p>Access runs until {o.paid_until:%b %d, %Y}.</p>" if o.paid_until else ""))
+def next_inv(db): db.flush(); return (db.scalar(select(func.max(Payment.inv_no))) or 0) + 1
+def inv_label(pay): return f"INV-{pay.created.year}-{(pay.inv_no or 0):05d}"
+def invoice_ctx(db, pay):
+    o = pay.order; S = settings(db); c = (S.get("currency") or "USD")
+    period = f"Access until {o.paid_until:%b %d, %Y}" if o.product.per and o.paid_until else ""
+    return {"label": inv_label(pay), "date": pay.created, "order": o, "product": o.product, "user": o.user, "method": {"payoneer": "Payoneer", "manual": "bKash / Nagad"}.get(o.provider, o.provider),
+            "status": "Paid" if o.status == "paid" else "Refunded" if o.status == "refunded" else "Pending", "period": period, "money": f"${pay.amount_cents / 100:,.2f}", "currency": "USD"}
+def invoice_pdf(iv, S):  # simple A4 invoice; text is reduced to Latin-1 because the built-in PDF fonts can't draw other scripts (the web invoice shows everything)
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib import colors
+    from reportlab.lib.units import mm
+    from reportlab.lib.styles import ParagraphStyle
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Table, TableStyle, Spacer
+    lat = lambda t: xesc((t or "").encode("latin-1", "replace").decode("latin-1"))
+    ink, soft = colors.HexColor("#1a1d24"), colors.HexColor("#666b75")
+    b = ParagraphStyle("b", fontName="Helvetica", fontSize=10, leading=14, textColor=ink); mu = ParagraphStyle("m", parent=b, textColor=soft, fontSize=9.5)
+    h = ParagraphStyle("h", parent=b, fontName="Helvetica-Bold", fontSize=26, leading=30, alignment=2); r = ParagraphStyle("r", parent=mu, alignment=2); rb = ParagraphStyle("rb", parent=b, alignment=2)
+    lab = ParagraphStyle("l", parent=mu, fontName="Helvetica-Bold", fontSize=8, textColor=colors.HexColor("#8a8f99"))
+    buf = io.BytesIO(); doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=20 * mm, rightMargin=20 * mm, topMargin=18 * mm, bottomMargin=18 * mm, title=iv["label"], author=S["biz_name"])
+    addr = "<br/>".join(lat(x) for x in (S["biz_address"] or "").splitlines() if x.strip()); extra = "".join(f"<br/>{lat(v)}" for v in (S["biz_email"], ("Reg. no. " + S["biz_tax"]) if S["biz_tax"] else "") if v)
+    head = Table([[Paragraph(f"<b>{lat(S['biz_name'])}</b>" + (f"<br/>{addr}" if addr else "") + extra, b), [Paragraph("INVOICE", h), Paragraph(f"<b>{lat(iv['label'])}</b>", rb), Paragraph(iv["date"].strftime("%B %d, %Y"), r)]]], colWidths=[95 * mm, 75 * mm])
+    head.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0)]))
+    u = iv["user"]; bill = Table([[[Paragraph("BILLED TO", lab), Paragraph(lat(u.name or u.email) + f"<br/><font color='#666b75'>{lat(u.email)}</font>" + (f"<br/><font color='#666b75'>{lat(u.country)}</font>" if u.country else ""), b)],
+                                  [Paragraph("PAYMENT", lab), Paragraph(lat(iv["method"]) + f"<br/><font color='#666b75'>Order {lat(iv['order'].code)}</font><br/><b>{lat(iv['status']).upper()}</b>", b)]]], colWidths=[95 * mm, 75 * mm])
+    bill.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (-1, -1), 0)]))
+    desc = f"<b>{lat(iv['product'].title)}</b><br/><font color='#666b75'>{lat(iv['product'].kind)}" + (f" - {lat(iv['period'])}" if iv["period"] else "") + "</font>"
+    items = Table([[Paragraph("DESCRIPTION", lab), Paragraph("QTY", ParagraphStyle("q", parent=lab, alignment=2)), Paragraph("AMOUNT", ParagraphStyle("a", parent=lab, alignment=2))], [Paragraph(desc, b), Paragraph("1", rb), Paragraph(iv["money"], rb)]], colWidths=[110 * mm, 15 * mm, 45 * mm])
+    items.setStyle(TableStyle([("LINEBELOW", (0, 0), (-1, 0), 1.2, ink), ("LINEBELOW", (0, 1), (-1, 1), .5, colors.HexColor("#e3e4e8")), ("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (0, -1), 0), ("RIGHTPADDING", (-1, 0), (-1, -1), 0), ("TOPPADDING", (0, 1), (-1, 1), 10), ("BOTTOMPADDING", (0, 1), (-1, 1), 10)]))
+    tot = Table([[Paragraph(f"<b>Total ({iv['currency']})</b>", b), Paragraph(f"<b>{iv['money']}</b>", ParagraphStyle("t", parent=rb, fontSize=13))]], colWidths=[125 * mm, 45 * mm]); tot.setStyle(TableStyle([("LINEABOVE", (0, 0), (-1, 0), 1.2, ink), ("LEFTPADDING", (0, 0), (0, 0), 0), ("RIGHTPADDING", (-1, 0), (-1, 0), 0), ("TOPPADDING", (0, 0), (-1, 0), 8)]))
+    story = [head, Spacer(1, 14 * mm), bill, Spacer(1, 10 * mm), items, Spacer(1, 4 * mm), tot]
+    if S["invoice_note"]: story += [Spacer(1, 14 * mm), Paragraph(lat(S["invoice_note"]), mu)]
+    doc.build(story); return buf.getvalue()
+def notify_paid(db, o, pay=None):  # receipt email; the invoice PDF is attached for every payment above zero
+    t = _html.escape(o.product.title); att = None; link = ""
+    if pay and pay.amount_cents > 0:
+        if not pay.inv_no: pay.inv_no = next_inv(db); db.commit()
+        link = f'<p><a href="{BASE}/invoice/{pay.id}">View or print your invoice online</a>. A PDF copy is attached.</p>'
+        try: att = [(f"{inv_label(pay)}.pdf", invoice_pdf(invoice_ctx(db, pay), settings(db)))]
+        except Exception as e: print("[invoice pdf failed]", e)
+    mail(o.user.email, f"Your purchase: {o.product.title}", f'<p>Thank you! <b>{t}</b> is ready in your library: <a href="{BASE}/account">open library</a>.</p>' + (f"<p>License key: <b>{o.license}</b></p>" if o.license else "") + (f"<p>Access runs until {o.paid_until:%b %d, %Y}.</p>" if o.paid_until else "") + link, att)
 def audit(db, u, what): db.add(Audit(who=u.email if u else "system", what=what[:300]))
 def share(db):
     try: return min(100, max(0, int(settings(db)["seller_share"])))
@@ -308,7 +370,7 @@ def pay_url(p, S):
     if S["offer_on"] == "1" and p.offer_link: return p.offer_link
     return p.pay_link or S["pay_default"]
 def record(db, o, ref, cents):
-    if not db.scalar(select(Payment.id).where(Payment.ref == ref)): db.add(Payment(order_id=o.id, ref=ref, amount_cents=cents))
+    if not db.scalar(select(Payment.id).where(Payment.ref == ref)): db.add(Payment(order_id=o.id, ref=ref, amount_cents=cents, inv_no=next_inv(db) if cents > 0 else None))
 def save_image(up, db):
     data = up.file.read(3 * 1024 * 1024 + 1)
     try:
@@ -329,7 +391,8 @@ async def err(request: Request, e: HTTPEx):
 @app.get("/")
 def home(request: Request, db=Depends(get_db)):
     ps = db.scalars(select(Product).where(Product.status == "live").order_by(Product.created.desc()).limit(6)).all()
-    return render(request, db, "home.html", products=ps)
+    avg, cnt = rating_stats(db, None)
+    return render(request, db, "home.html", products=ps, pl_avg=avg, pl_count=cnt, pl_reviews=db.scalars(select(Review).where(Review.product_id.is_(None), Review.status == "approved").order_by(Review.created.desc()).limit(6)).all())
 @app.get("/products")
 def products(request: Request, kind: str = "", db=Depends(get_db)):
     q = select(Product).where(Product.status == "live").order_by(Product.created.desc())
@@ -342,7 +405,16 @@ def product(slug: str, request: Request, db=Depends(get_db)):
     u = me(request, db)
     if not p or (p.status != "live" and not (u and (u.role == "admin" or p.owner_id == u.id))): raise HTTPEx(404)
     owned = bool(u and any(has_access(o) for o in db.scalars(select(Order).where(Order.user_id == u.id, Order.product_id == p.id))))
-    return render(request, db, "product.html", p=p, owned=owned)
+    S = settings(db); revs = db.scalars(select(Review).where(Review.product_id == p.id, Review.status == "approved").order_by(Review.created.desc()).limit(50)).all()
+    mine = db.scalar(select(Review).where(Review.user_id == u.id, Review.product_id == p.id)) if u else None
+    can_review = bool(u and not p.external_url and db.scalar(select(Order.id).where(Order.user_id == u.id, Order.product_id == p.id, Order.status == "paid")))
+    n = price(p, S)[0]; ld = {"@context": "https://schema.org", "@type": "Product", "name": p.title, "description": p.summary, "category": p.kind, "url": f"{BASE}/p/{p.slug}", "brand": {"@type": "Brand", "name": S["site_name"]}}
+    if p.image: ld["image"] = f"{BASE}/img/{p.image}"
+    if not p.external_url or n > 0: ld["offers"] = {"@type": "Offer", "price": f"{n / 100:.2f}", "priceCurrency": "USD", "availability": "https://schema.org/InStock", "url": p.external_url or f"{BASE}/p/{p.slug}"}
+    if p.rating_count:  # only real, approved reviews ever reach the structured data
+        ld["aggregateRating"] = {"@type": "AggregateRating", "ratingValue": f"{p.rating_avg:.1f}", "reviewCount": p.rating_count, "bestRating": "5"}
+        ld["review"] = [{"@type": "Review", "author": {"@type": "Person", "name": rname(r.user)}, "reviewRating": {"@type": "Rating", "ratingValue": r.rating, "bestRating": 5}, "reviewBody": r.body[:300]} for r in revs[:5]]
+    return render(request, db, "product.html", p=p, owned=owned, ld=ld, revs=revs, dist=rating_dist(db, p.id), mine=mine, can_review=can_review)
 @app.get("/pages/{slug}")
 def page(slug: str, request: Request, db=Depends(get_db)):
     pg = db.get(Page, slug)
@@ -386,7 +458,11 @@ def logout(request: Request, _=Depends(csrf)): request.session.clear(); return g
 @app.get("/account")
 def account(request: Request, db=Depends(get_db)):
     u = need(request, db)
-    return render(request, db, "account.html", reqs=db.scalars(select(CustomRequest).where(CustomRequest.user_id == u.id).order_by(CustomRequest.created.desc())).all(), new2fa=request.session.get("new2fa"), orders=db.scalars(select(Order).where(Order.user_id == u.id).order_by(Order.created.desc())).all())
+    invs = db.scalars(select(Payment).join(Order, Order.id == Payment.order_id).where(Order.user_id == u.id, Payment.amount_cents > 0).order_by(Payment.id.desc())).all()
+    for x in invs:
+        if not x.inv_no: x.inv_no = next_inv(db)  # invoices for payments that predate numbering
+    db.commit()
+    return render(request, db, "account.html", invoices=invs, reqs=db.scalars(select(CustomRequest).where(CustomRequest.user_id == u.id).order_by(CustomRequest.created.desc())).all(), new2fa=request.session.get("new2fa"), orders=db.scalars(select(Order).where(Order.user_id == u.id).order_by(Order.created.desc())).all())
 @app.post("/account")
 def account_save(request: Request, db=Depends(get_db), _=Depends(csrf), name: str = Form(""), country: str = Form("")):
     u = need(request, db); u.name, u.country = name.strip()[:120], country.strip()[:60]; db.commit(); flash(request, "Profile saved."); return go("/account")
@@ -495,7 +571,9 @@ def admin(request: Request, db=Depends(get_db)):
     claims = db.scalar(select(func.count(Order.id)).where(Order.status == "pending", Order.claimed == True))  # noqa: E712
     reqs = db.scalars(select(CustomRequest).order_by(CustomRequest.status != "new", CustomRequest.updated.desc()).limit(60)).all()
     new_reqs = db.scalar(select(func.count(CustomRequest.id)).where(CustomRequest.status == "new"))
-    return render(request, db, "admin.html", DEF=DEF, paid=paid, bals=bals, sh=sh, expiring=expiring, log=log, claims=claims, reqs=reqs, new_reqs=new_reqs, users=db.scalars(select(User).order_by(User.created.desc())).all(),
+    new_revs = db.scalar(select(func.count(Review.id)).where(Review.status == "pending"))
+    revs = db.scalars(select(Review).order_by(Review.status != "pending", Review.updated.desc()).limit(60)).all()
+    return render(request, db, "admin.html", DEF=DEF, paid=paid, bals=bals, sh=sh, expiring=expiring, log=log, claims=claims, reqs=reqs, new_reqs=new_reqs, revs=revs, new_revs=new_revs, users=db.scalars(select(User).order_by(User.created.desc())).all(),
                   orders=db.scalars(select(Order).order_by(Order.status != "pending", Order.claimed.desc(), Order.created.desc()).limit(60)).all(), pending=db.scalar(select(func.count(Product.id)).where(Product.status == "pending")))
 @app.post("/admin/settings")
 async def admin_settings(request: Request, db=Depends(get_db)):
@@ -521,8 +599,9 @@ def admin_order(oid: int, request: Request, db=Depends(get_db), _=Depends(csrf),
     elif action == "renew" and o.status == "paid" and o.product.per:
         o.paid_until = nxt(); db.flush(); record(db, o, f"manual-{o.code}-{int(time.time())}", o.amount_cents); fresh = True
     elif action == "refunded": o.status = "refunded"
+    elif action == "resend" and o.status == "paid": fresh = True
     audit(db, adm, f"Order {o.code}: {action}"); db.commit()
-    if fresh: notify_paid(o)
+    if fresh: notify_paid(db, o, db.scalar(select(Payment).where(Payment.order_id == o.id).order_by(Payment.id.desc())))
     flash(request, f"Order {o.code} updated."); return go("/admin")
 @app.post("/admin/payout")
 def admin_payout(request: Request, db=Depends(get_db), _=Depends(csrf), seller_id: int = Form(), amount_usd: float = Form(), note: str = Form("")):
@@ -678,14 +757,131 @@ def img(name: str, db=Depends(get_db)):
     if not b: raise HTTPEx(404)
     return Response(b.data, media_type="image/webp", headers={"Cache-Control": "public, max-age=31536000, immutable"})
 
+# ---------- reviews ----------
+def rname(u):  # public name: first name and last initial, never the email
+    parts = (u.name or "").split()
+    return "Customer" if not parts else parts[0] + (f" {parts[-1][0]}." if len(parts) > 1 else "")
+def rev_cond(pid): return Review.product_id.is_(None) if pid is None else Review.product_id == pid
+def rating_stats(db, pid):
+    avg, cnt = db.execute(select(func.avg(Review.rating), func.count(Review.id)).where(rev_cond(pid), Review.status == "approved")).one()
+    return round(float(avg or 0), 2), cnt
+def rating_dist(db, pid):
+    d = {n: 0 for n in (5, 4, 3, 2, 1)}
+    for rt, c in db.execute(select(Review.rating, func.count(Review.id)).where(rev_cond(pid), Review.status == "approved").group_by(Review.rating)): d[rt] = c
+    return d
+def refresh_rating(db, pid):
+    if pid is None: return
+    p = db.get(Product, pid)
+    if p: p.rating_avg, p.rating_count = rating_stats(db, pid); db.commit()
+@app.get("/reviews")
+def reviews_page(request: Request, db=Depends(get_db)):
+    u = me(request, db); avg, cnt = rating_stats(db, None)
+    return render(request, db, "reviews.html", avg=avg, cnt=cnt, dist=rating_dist(db, None), mine=db.scalar(select(Review).where(Review.user_id == u.id, Review.product_id.is_(None))) if u else None,
+                  items=db.scalars(select(Review).where(Review.product_id.is_(None), Review.status == "approved").order_by(Review.created.desc()).limit(100)).all(),
+                  recent=db.scalars(select(Review).join(Product, Product.id == Review.product_id).where(Review.status == "approved", Product.status == "live").order_by(Review.created.desc()).limit(8)).all())
+@app.post("/review")
+def review_save(request: Request, db=Depends(get_db), _=Depends(csrf), product_id: int = Form(0), rating: int = Form(0), title: str = Form(""), body: str = Form(""), website: str = Form("")):
+    u = need(request, db)
+    if website: return go("/")  # honeypot
+    limit(request, "review", 10, 3600); p, back = None, "/reviews"
+    if product_id:  # product reviews are for people who actually got the product
+        p = db.get(Product, product_id)
+        if not p or p.status != "live" or p.external_url: raise HTTPEx(404)
+        if not db.scalar(select(Order.id).where(Order.user_id == u.id, Order.product_id == p.id, Order.status == "paid")): raise HTTPEx(403, "Only people who got this product can review it.")
+        back = f"/p/{p.slug}#reviews"
+    body, title = body.strip()[:2000], title.strip()[:120]
+    if not 1 <= rating <= 5 or len(body) < 10: flash(request, "Please choose a rating and write at least a sentence."); return go(back)
+    r = db.scalar(select(Review).where(Review.user_id == u.id, rev_cond(p.id if p else None)))  # one review per person per target; editing sends it back for approval
+    if r: r.rating, r.title, r.body, r.status, r.reply, r.updated = rating, title, body, "pending", "", datetime.utcnow()
+    else: r = Review(user_id=u.id, product_id=p.id if p else None, rating=rating, title=title, body=body); db.add(r)
+    db.commit(); refresh_rating(db, p.id if p else None)
+    if E("ADMIN_EMAIL"): mail(E("ADMIN_EMAIL"), "Review to approve", f"<p>{rating}/5 for <b>{_html.escape(p.title if p else 'the platform')}</b> from {_html.escape(u.email)}:</p><p>{_html.escape(body[:500])}</p><p><a href=\"{BASE}/admin\">Approve it in Admin</a></p>")
+    flash(request, "Thanks! Your review will appear once I've approved it."); return go(back)
+@app.post("/review/{rid}/delete")
+def review_delete(rid: int, request: Request, db=Depends(get_db), _=Depends(csrf)):
+    u = need(request, db); r = db.get(Review, rid)
+    if not r or (u.role != "admin" and r.user_id != u.id): raise HTTPEx(404)
+    pid = r.product_id; db.delete(r); db.commit(); refresh_rating(db, pid); flash(request, "Review deleted."); return go("/account")
+@app.post("/admin/review/{rid}")
+def admin_review(rid: int, request: Request, db=Depends(get_db), _=Depends(csrf), action: str = Form(), reply: str = Form("")):
+    adm = need(request, db, "admin"); r = db.get(Review, rid)
+    if not r: raise HTTPEx(404)
+    pid = r.product_id
+    if action == "delete": db.delete(r)
+    elif action in ("approve", "reject", "reply"):
+        if action != "reply": r.status = "approved" if action == "approve" else "rejected"
+        r.reply, r.updated = reply.strip()[:1000], datetime.utcnow()
+    else: raise HTTPEx(400, "Unknown action.")
+    audit(db, adm, f"Review {rid}: {action}"); db.commit(); refresh_rating(db, pid); flash(request, f"Review {action}d." if action != "reply" else "Reply saved."); return go("/admin")
+
+# ---------- invoices ----------
+def pay_for(request, db, pid):
+    u = need(request, db); pay = db.get(Payment, pid)
+    if not pay or pay.amount_cents <= 0 or (u.role != "admin" and pay.order.user_id != u.id): raise HTTPEx(404)  # customers only ever see their own
+    if not pay.inv_no: pay.inv_no = next_inv(db); db.commit()
+    return u, pay
+@app.get("/invoice/{pid}")
+def invoice_page(pid: int, request: Request, db=Depends(get_db)):
+    u, pay = pay_for(request, db, pid); return render(request, db, "invoice.html", pay=pay, iv=invoice_ctx(db, pay))
+@app.get("/invoice/{pid}/pdf")
+def invoice_download(pid: int, request: Request, db=Depends(get_db)):
+    u, pay = pay_for(request, db, pid); label = inv_label(pay)
+    return Response(invoice_pdf(invoice_ctx(db, pay), settings(db)), media_type="application/pdf", headers={"Content-Disposition": f'attachment; filename="{label}.pdf"', "Cache-Control": "private, no-store"})
+
+# ---------- search ----------
+def plain(h): return _html.unescape(nh3.clean(h or "", tags=set()))  # product text without HTML tags or attributes
+def terms(q): return re.findall(r"[\w\-\.\+#]+", q.lower())[:6]
+def price_label(p, S):
+    n = price(p, S)[0]
+    return "" if p.external_url and n == 0 else "Free" if n == 0 else fmt(n) + ("/mo" if p.per else "")
+def search_products(db, q, S, kind="", sort="relevance"):  # every word must match somewhere; title matches rank highest
+    ts = terms(q); out = []
+    if not ts: return out
+    for p in db.scalars(select(Product).where(Product.status == "live").limit(2000)):
+        if kind and p.kind != kind: continue
+        title, kd, summ, body = p.title.lower(), p.kind.lower(), p.summary.lower(), plain(p.body).lower()
+        if not all(t in f"{title} {kd} {summ} {body}" for t in ts): continue
+        qq = " ".join(ts); sc = 100 if title == qq else 60 if title.startswith(qq) else 40 if qq in title else 0
+        for t in ts: sc += (18 if re.search(r"\b" + re.escape(t), title) else 10 if t in title else 0) + (8 if t in kd else 0) + (5 if t in summ else 0) + (1 if t in body else 0)
+        out.append((sc, p))
+    key = {"newest": lambda x: -x[1].created.timestamp(), "price_asc": lambda x: price(x[1], S)[0], "price_desc": lambda x: -price(x[1], S)[0], "rating": lambda x: (-x[1].rating_avg, -x[1].rating_count)}.get(sort, lambda x: (-x[0], -x[1].created.timestamp()))
+    return [p for _, p in sorted(out, key=key)]
+def did_you_mean(db, q):  # typo rescue: snap each word to the closest word (or word start) used in live product titles and types
+    words = set()
+    for t, k in db.execute(select(Product.title, Product.kind).where(Product.status == "live")): words.update(re.findall(r"[a-z0-9]+", f"{t} {k}".lower()))
+    ts = terms(q); fixed = []
+    for t in ts:
+        cands = {w: w for w in words}
+        for w in words:
+            for n in (len(t) - 1, len(t), len(t) + 1):
+                if 3 <= n < len(w): cands.setdefault(w[:n], w)  # lets "clinc" find "clinicdesk"
+        hit = difflib.get_close_matches(t, list(cands), n=1, cutoff=.75); fixed.append(cands[hit[0]] if hit else t)
+    return " ".join(fixed) if fixed != ts else ""
+@app.get("/api/search")
+def api_search(request: Request, q: str = "", db=Depends(get_db)):
+    limit(request, "search", 90, 60); q = q.strip()[:80]; S = settings(db); res = search_products(db, q, S) if len(q) >= 2 else []
+    return {"q": q, "total": len(res), "suggest": did_you_mean(db, q) if len(q) >= 2 and not res else "",
+            "results": [{"title": p.title, "url": f"/p/{p.slug}", "kind": p.kind, "price": price_label(p, S), "summary": p.summary[:90], "image": f"/img/{p.image}" if p.image else "", "art": p.id % 4} for p in res[:6]]}
+@app.get("/search")
+def search_page(request: Request, q: str = "", kind: str = "", sort: str = "relevance", db=Depends(get_db)):
+    limit(request, "searchp", 60, 60); q = q.strip()[:80]; S = settings(db); sort = sort if sort in ("relevance", "newest", "price_asc", "price_desc", "rating") else "relevance"
+    res, sugg, shown = search_products(db, q, S, "", sort), "", q
+    if q and not res:
+        sugg = did_you_mean(db, q)
+        if sugg: res, shown = search_products(db, sugg, S, "", sort), sugg
+    kinds = sorted({p.kind for p in res}); res = [p for p in res if not kind or p.kind == kind]
+    latest = [] if q else db.scalars(select(Product).where(Product.status == "live").order_by(Product.created.desc()).limit(6)).all()
+    allkinds = db.scalars(select(Product.kind).where(Product.status == "live").distinct()).all() if not q else []
+    return render(request, db, "search.html", q=q, shown=shown, sugg=sugg, results=res, kinds=kinds, kind=kind, sort=sort, latest=latest, allkinds=sorted(allkinds))
+
 # ---------- SEO ----------
 @app.get("/robots.txt")
 def robots():
     ai = "\n".join(f"User-agent: {b}\nAllow: /\n" for b in ("GPTBot", "ClaudeBot", "PerplexityBot", "Google-Extended", "CCBot"))
-    return PlainTextResponse(f"User-agent: *\nAllow: /\nDisallow: /admin\nDisallow: /studio\nDisallow: /account\nDisallow: /buy\nDisallow: /request/\nDisallow: /download\n\n{ai}\nSitemap: {BASE}/sitemap.xml\n")
+    return PlainTextResponse(f"User-agent: *\nAllow: /\nDisallow: /admin\nDisallow: /studio\nDisallow: /account\nDisallow: /buy\nDisallow: /request/\nDisallow: /api/\nDisallow: /download\n\n{ai}\nSitemap: {BASE}/sitemap.xml\n")
 @app.get("/sitemap.xml")
 def sitemap(db=Depends(get_db)):
-    urls = ["/", "/products", "/request"] + [f"/pages/{p.slug}" for p in db.scalars(select(Page))] + [f"/p/{p.slug}" for p in db.scalars(select(Product).where(Product.status == "live"))]
+    urls = ["/", "/products", "/request", "/reviews"] + [f"/pages/{p.slug}" for p in db.scalars(select(Page))] + [f"/p/{p.slug}" for p in db.scalars(select(Product).where(Product.status == "live"))]
     return Response('<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">' + "".join(f"<url><loc>{BASE}{u}</loc></url>" for u in urls) + "</urlset>", media_type="application/xml")
 @app.get("/llms.txt")
 def llms(db=Depends(get_db)):

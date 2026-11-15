@@ -1,5 +1,6 @@
 {% extends "base.html" %}{% from "_m.html" import card with context %}
 {% block title %}Shop | {{ S.site_name }}{% endblock %}
 {% block body %}<section class="sec"><p class="eyebrow">Catalog</p><h1 style="font-size:clamp(40px,6vw,84px)">Everything in the shop</h1>
+<form action="/search" method="get" class="sbig" role="search"><input name="q" type="search" placeholder="Search the shop" maxlength="80" aria-label="Search the shop"><button class="btn">Search</button></form>
 <div class="chips"><a href="/products" class="{{ 'on' if not kind }}">All</a>{% for k in kinds %}<a href="/products?kind={{ k|urlencode }}" class="{{ 'on' if k==kind }}">{{ k }}</a>{% endfor %}</div>
 <div class="grid">{% for p in products %}{{ card(p) }}{% else %}<p class="mute">Nothing here yet.</p>{% endfor %}</div></section>{% endblock %}

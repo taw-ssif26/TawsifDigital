@@ -9,7 +9,7 @@ def test_anonymous_sees_prompt_not_form_and_cannot_post():
     assert C().form("/request", **GOOD).headers["location"] == "/login"
 
 def test_submit_notifies_admin_and_validates(monkeypatch):
-    sent = []; monkeypatch.setattr(m, "mail", lambda to, sub, body: sent.append((to, sub, body)))
+    sent = []; monkeypatch.setattr(m, "mail", lambda to, sub, body, att=None: sent.append((to, sub, body)))
     b = login("buyer"); url = make(b); assert url.startswith("/request/") and sent[0][0] == "admin@test.com" and "Inventory tracker" in sent[0][2]
     assert b.get(url).status_code == 200 and "Inventory tracker" in b.get("/account").text
     assert b.form("/request", **{**GOOD, "details": "too short"}).headers["location"] == "/request"
@@ -25,7 +25,7 @@ def test_privacy_between_customers_and_admin_dashboard():
     d = a.get("/admin").text; assert "Inventory tracker" in d and "new custom requests" in d and b.get("/admin").status_code == 403
 
 def test_conversation_quote_accept_and_pay_link(monkeypatch):
-    sent = []; monkeypatch.setattr(m, "mail", lambda to, sub, body: sent.append((to, sub, body)))
+    sent = []; monkeypatch.setattr(m, "mail", lambda to, sub, body, att=None: sent.append((to, sub, body)))
     b, a = login("buyer"), login("admin"); url = make(b); rid = url.split("/")[-1]; sent.clear()
     a.form(f"/request/{rid}/msg", body="Can you share your supplier list?"); assert sent[-1][0] == b.email and "supplier list" in sent[-1][2]
     b.form(f"/request/{rid}/msg", body="Yes, sending it."); assert sent[-1][0] == "admin@test.com" and "Yes, sending it." in b.get(url).text

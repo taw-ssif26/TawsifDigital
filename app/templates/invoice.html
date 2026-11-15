@@ -1,0 +1,10 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex">
+<title>{{ iv.label }} | {{ S.site_name }}</title><link rel="stylesheet" href="/static/invoice.css"><script src="/static/print.js" defer></script></head><body>
+<div class="bar"><a href="{{ '/admin' if u.role == 'admin' else '/account' }}">← Back</a><span><button type="button" data-print>Print</button> <a class="b" href="/invoice/{{ pay.id }}/pdf">Download PDF</a></span></div>
+<main class="inv"><div class="top"><div class="biz"><b>{{ S.biz_name }}</b><div class="muted" style="white-space:pre-line">{{ S.biz_address }}</div>{% if S.biz_email %}<div class="muted">{{ S.biz_email }}</div>{% endif %}{% if S.biz_tax %}<div class="muted">Reg. no. {{ S.biz_tax }}</div>{% endif %}</div>
+<div class="r"><h1>Invoice</h1><div><b style="color:#1a1d24">{{ iv.label }}</b></div><div>{{ iv.date.strftime('%B %d, %Y') }}</div></div></div>
+<div class="grid2"><div><h4>Billed to</h4><div>{{ iv.user.name or iv.user.email }}</div><div class="muted">{{ iv.user.email }}</div>{% if iv.user.country %}<div class="muted">{{ iv.user.country }}</div>{% endif %}</div>
+<div><h4>Payment</h4><div>{{ iv.method }}</div><div class="muted">Order {{ iv.order.code }}</div><div style="margin-top:8px"><span class="stamp {{ 'ref' if iv.status != 'Paid' }}">{{ iv.status }}</span></div></div></div>
+<table><tr><th>Description</th><th class="num">Qty</th><th class="num">Amount</th></tr><tr><td><b>{{ iv.product.title }}</b><div class="muted">{{ iv.product.kind }}{% if iv.period %} · {{ iv.period }}{% endif %}</div></td><td class="num">1</td><td class="num">{{ iv.money }}</td></tr></table>
+<div class="tot"><div><p><span>Subtotal</span><span>{{ iv.money }}</span></p><p class="g"><span>Total ({{ iv.currency }})</span><span>{{ iv.money }}</span></p></div></div>
+{% if S.invoice_note %}<div class="note">{{ S.invoice_note }}</div>{% endif %}</main></body></html>

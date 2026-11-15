@@ -16,10 +16,12 @@
 {% if u %}{% if u.role == 'admin' %}<a href="/admin">Admin</a>{% endif %}{% if u.role in ('admin','seller') %}<a href="/studio">Studio</a>{% endif %}<a href="/account">Account</a>
 <form method="post" action="/logout" style="display:inline"><input type="hidden" name="csrf_token" value="{{ csrf }}"><button class="lnk">Sign out</button></form>
 {% else %}<a href="/login">Sign in</a>{% endif %}
+<a class="sbtn" href="/search" data-search aria-label="Search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><span>Search</span><kbd>/</kbd></a>
 <div class="seg" role="group" aria-label="Theme"><button data-t="light">Light</button><button data-t="dark">Dark</button><button data-t="fx">Effects</button></div></nav></div></header>
 <main><div class="w">{% if flash %}<p class="msg" role="status">{{ flash }}</p>{% endif %}{% block body %}{% endblock %}</div></main>
 <footer><div class="w"><div class="fg"><div><a class="logo" href="/" style="color:var(--fg);font-size:28px;margin-bottom:12px">{{ S.site_name }}</a><p style="max-width:34ch">{{ S.footer }}</p></div>
-<div><h4>Shop</h4><a href="/products">All products</a><a href="/request">Custom work</a>{% if u %}<a href="/account">Your library</a>{% else %}<a href="/register">Create account</a><a href="/login">Sign in</a>{% endif %}</div>
+<div><h4>Shop</h4><a href="/products">All products</a><a href="/request">Custom work</a><a href="/reviews">Reviews</a>{% if u %}<a href="/account">Your library</a>{% else %}<a href="/register">Create account</a><a href="/login">Sign in</a>{% endif %}</div>
 <div><h4>Info</h4>{% for p in pages %}<a href="/pages/{{ p.slug }}">{{ p.title }}</a>{% endfor %}</div></div>
 <p class="fine">© {{ S.site_name }}. All rights reserved.</p></div></footer>
+<div id="sx" hidden role="dialog" aria-modal="true" aria-label="Search"><div class="sxb"><form action="/search" method="get" class="sxf" role="search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><input id="sxi" name="q" type="search" placeholder="Search products, automations, source code" autocomplete="off" maxlength="80" aria-label="Search" aria-controls="sxl"><button type="button" class="sxc" aria-label="Close search">Esc</button></form><div id="sxl" role="listbox" aria-live="polite"></div></div></div>
 </body></html>
